@@ -1,0 +1,235 @@
+{
+  "main": {
+    "id": "1e58f85e9f9fdabb",
+    "type": "split",
+    "children": [
+      {
+        "id": "de38489e416b24fd",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "ec8fe8a85bd2a957",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "designs/Log-Driven OLAP Metrics - Implementation Plan.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Log-Driven OLAP Metrics - Implementation Plan"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "b52bab8e50439f29",
+    "type": "split",
+    "children": [
+      {
+        "id": "64aadef4cf5801ce",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "15943ccaf6cb8233",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "73240ff497389679",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "tag:dispatch-engine",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "300fb56a0807abf5",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 238.5
+  },
+  "right": {
+    "id": "b315e67d1016ff27",
+    "type": "split",
+    "children": [
+      {
+        "id": "4210f42a1c244a00",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "94e861581ca18b60",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "meeting notes/2025-11-12 Merchant Churn.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for 2025-11-12 Merchant Churn"
+            }
+          },
+          {
+            "id": "3f8858b28e0815b1",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "Heartbeat Frequencies.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from Heartbeat Frequencies"
+            }
+          },
+          {
+            "id": "c0d3dfe4bb928d57",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "9cf629b94dc51ec1",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "Heartbeat Frequencies.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of Heartbeat Frequencies"
+            }
+          },
+          {
+            "id": "f11113d824e50368",
+            "type": "leaf",
+            "state": {
+              "type": "smart-connections-view",
+              "state": {},
+              "icon": "smart-connections",
+              "title": "Connections"
+            }
+          },
+          {
+            "id": "e38706fcbbee5a06",
+            "type": "leaf",
+            "state": {
+              "type": "mermaid-toolbar-view",
+              "state": {},
+              "icon": "trident-custom",
+              "title": "Mermaid Toolbar"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 200,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false,
+      "mermaid-tools:Open Mermaid Toolbar": false,
+      "smart-connections:Open: Smart Chat": false,
+      "smart-connections:Smart Connections: Open connections view": false,
+      "smart-connections:Smart Connections: Open random connection": true
+    }
+  },
+  "active": "ec8fe8a85bd2a957",
+  "lastOpenFiles": [
+    "designs/Log-Driven OLAP Metrics - Engineering Spec.md",
+    "designs/Log-Driven OLAP Metrics - Implementation Plan.md",
+    "designs/Log-Driven OLAP Metrics - Business Proposal.md",
+    "designs/Device API - Technical Design.md",
+    "research/Observability_Lifecycle_Analysis.md",
+    "research/DEVICE_API_RESEARCH_NOTES.md",
+    "designs/Device API - Implementation Milestones.md",
+    "designs/Device API - Product Requirements Document.md",
+    "designs/Proposal - Improving Developer Productivity and Onboarding.md",
+    "designs/Observability Strategy.md",
+    "meeting notes/2025-11-25 Devices.md",
+    "research",
+    "reference/Point-to-Point (P2P) Dispatch.md",
+    "reference/P2P Dispatch Sequence Flow.md",
+    "reference/Continuous Replanning.md",
+    "reference/Dispatch Engine - Orphaned Demands.md",
+    "reference/Dispatch Engine - handleDeliveryLoaded.md",
+    "reference/Dispatch Engine - Data Consistency.md",
+    "personal/2025-11-18.md",
+    "2025-11-18.md",
+    "personal/Onboarding feedback.md",
+    "meeting notes/2025-11-12 Merchant Churn.md",
+    "designs/observability-olap-proposal.md",
+    "reference/Deviceless PIN Flow.md",
+    "reference/Load Methods and Types.md",
+    "reference/State RDS Schema.md",
+    "reference/Data Analytics Platform.md",
+    "meeting notes",
+    "personal",
+    "designs",
+    "reference",
+    "Personal",
+    "TypeScript",
+    "Services",
+    "Go",
+    "Frontend"
+  ]
+}

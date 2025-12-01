@@ -1,0 +1,2 @@
+
+"smart_sources:reference/Task State State Machine.md": {"path":"reference/Task State State Machine.md","last_embed":{"hash":null},"embeddings":{},"last_read":{"hash":"515h0z","at":1762807309243},"class_name":"SmartSource","last_import":{"mtime":1762389491226,"size":195,"at":1762807309243,"hash":"515h0z"},"blocks":{"#---frontmatter---":[1,6],"#Task State State Machine":[7,11],"#Task State State Machine#{1}":[9,11]},"outlinks":[{"title":"Delivery","target":"Delivery","line":9}],"metadata":{"tags":["#state-machine","#diagram","#task"]},"task_lines":[]},
