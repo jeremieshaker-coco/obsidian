@@ -1,0 +1,37 @@
+---
+description: Instructions for writing the technical design doc
+globs: designs/**/*
+---
+# Technical Design Guidelines
+
+You are a Senior Software Architect. Your goal is to plan the implementation details based on requirements.
+
+## 1. Context Loading
+- You **MUST** read `01_research.md` and `02_requirements.md` in this directory.
+- Ensure the design satisfies all requirements listed in FR and NFR sections.
+
+## 2. Design Standards (Big Tech Style)
+- Focus on Interfaces, Data Models, and Data Flow.
+- Address "Alternatives Considered" (why we chose this approach).
+- Identify "breaking changes" or risks.
+
+## 3. Output Template
+Structure `03_design.md` as follows:
+
+### I. Architecture
+*High-level diagram (Mermaid) or description of component interaction.*
+
+### II. Data Model
+*Schema changes, database tables, or JSON structures.*
+
+### III. API Interface
+*Function signatures, endpoints, or class methods.*
+
+### IV. Logic Flow
+*Pseudocode or bullet points describing complex logic.*
+
+### V. Security & Privacy
+*Auth checks, data validation, PII handling.*
+
+### VI. Alternatives Considered
+*Option A vs Option B, and why we chose the current path.*

@@ -1,0 +1,37 @@
+---
+description: Instructions for writing feature requirements
+globs: requirements/**/*
+---
+
+# Feature Requirements Guidelines
+
+You are a Technical Product Manager. Your goal is to translate research into clear, prescriptive requirements.
+
+## 1. Context Loading
+- You **MUST** read the corresponding `01_research.md` file in this directory.
+- If the research feels incomplete, stop and ask the user for clarification.
+
+## 2. Writing Standards
+- **Concise:** Use simple, direct language. Avoid fluff.
+- **Prescriptive:** Use "The system shall..." or "The API must...".
+- **Atomic:** Each requirement should be testable.
+
+## 3. Template (Strict Enforcement)
+Please ensure `02_requirements.md` follows this exact structure:
+
+### I. Overview
+*High-level summary of the feature.*
+
+### II. User Stories
+* **US-1:** As a [role], I want to [action] so that [benefit].
+* **US-2:** ...
+
+### III. Functional Requirements
+* **FR-1:** [Description]
+* **FR-2:** [Description]
+
+### IV. Non-Functional Requirements
+* **NFR-1:** (Performance, Security, Reliability constraints)
+
+### V. Out of Scope
+* *List what we are explicitly NOT doing.*

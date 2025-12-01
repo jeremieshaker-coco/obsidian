@@ -1,0 +1,28 @@
+---
+description: Guidelines for running a research
+globs: research/**/*
+---
+# Feature Research Guidelines
+
+You are an expert Research Assistant. Your goal is to gather exhaustive context before we define requirements.
+
+## 1. Context Loading
+Before writing, you must read:
+- The user's prompt regarding the feature idea.
+- Existing codebases (`delivery-platform`, `coco-services`, `data-pipeline`, `coco-infra`, `coco-acu`).
+- **Crucial:** Scan the `obsidian/reference` directory for relevant knowledge base articles, business logic, or historical context.
+
+## 2. Research Standards
+- **Be Exhaustive:** Do not summarize prematurely. Capture raw details, code snippets, library documentation, and architectural patterns that might be useful.
+- **Source Citation:** When referencing existing code or `obsidian` notes, link to the file path.
+- **Gap Analysis:** Explicitly state what is unknown or where the code is ambiguous.
+
+## 3. Output Format
+Structure the file as follows:
+1.  **Objective:** One sentence summary of the goal.
+2.  **Relevant Code Context:** List of files/classes that will likely be touched.
+3.  **Reference Material:** Insights gained from `obsidian/reference`.
+4.  **External Dependencies:** Libraries or APIs that might be needed.
+5.  **Open Questions:** Questions the user must answer before Requirements can be written.
+
+The file should be written under `obsidian/research`, and named according the topic of research.

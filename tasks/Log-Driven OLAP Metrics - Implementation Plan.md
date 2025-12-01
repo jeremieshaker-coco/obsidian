@@ -61,43 +61,7 @@
     4.  Delete the temporary file.
 - **Status**: [ ]
 
-### Task 1.2: Extend Logger Interface
-- **Goal**: Add `event()` method to the shared Logger to enforce structured event logging.
-- **Files**:
-    - `delivery-platform/lib/common/src/logging/interfaces.ts`
-    - `delivery-platform/lib/common/src/logging/adapters/json-logger.ts`
-    - `delivery-platform/lib/common/src/logging/adapters/default-logger.ts`
-- **Exact Changes**:
-    1.  **Update `ILogger` in `interfaces.ts`**:
-        -   Add abstract method: `abstract event(name: string, context: Record<string, any>): void;`
-    2.  **Update `JsonLogger` in `json-logger.ts`**:
-        -   Implement `event(name, context)`:
-            ```typescript
-            event(name: string, context: Record<string, any>) {
-              this.log({ event: name, ...context });
-            }
-            ```
-    3.  **Update `DefaultLogger` in `default-logger.ts`**:
-        -   Implement `event(name, context)`:
-            ```typescript
-            event(name: string, context: Record<string, any>) {
-              this.log(`[Event: ${name}]`, context);
-            }
-            ```
-- **Verification**:
-    1.  Run `tsc --noEmit` to check for interface implementation errors.
-    2.  Create `verify_logger.ts`:
-        ```typescript
-        import { JsonLogger } from './delivery-platform/lib/common/src/logging/adapters/json-logger';
-        const logger = new JsonLogger();
-        const spy = jest.spyOn(logger, 'log');
-        logger.event('test_event', { foo: 'bar' });
-        console.log('Called with:', spy.mock.calls[0][0]);
-        ```
-    3.  Run `ts-node verify_logger.ts` (ensure jest/ts-node setup allows spying, or just use `console.log` override). Expect output containing `event: 'test_event'`.
-- **Status**: [ ]
-
-### Task 1.3: Robot Lifecycle Events
+### Task 1.2: Robot Lifecycle Events
 - **Goal**: Add robot-specific events to the registry.
 - **Files**: `delivery-platform/lib/common/src/events/registry.ts`
 - **Exact Changes**:
@@ -119,7 +83,7 @@
     4.  Delete the file.
 - **Status**: [ ]
 
-### Task 1.4: Demand & Delivery Events
+### Task 1.3: Demand & Delivery Events
 - **Goal**: Add demand and delivery events.
 - **Files**: `delivery-platform/lib/common/src/events/registry.ts`
 - **Exact Changes**:
@@ -145,7 +109,7 @@
     2.  Check file content to ensure keys match exactly.
 - **Status**: [ ]
 
-### Task 1.5: Trip & Pilot Events
+### Task 1.4: Trip & Pilot Events
 - **Goal**: Add trip and pilot events.
 - **Files**: `delivery-platform/lib/common/src/events/registry.ts`
 - **Exact Changes**:
@@ -182,28 +146,30 @@
         -   Import `Events` from registry.
         -   After `this.repo.create(...)` returns successfully:
         -   Extract `merchantId` from `params.features` (cast as necessary).
-        -   Call `this.logger.event` with:
+        -   Call `this.logger.info` with object:
             ```typescript
-            this.logger.event(Events.DEMAND_CREATED, {
+            {
+              event: Events.DEMAND_CREATED,
               demand_id: result.id,
               merchant_id: merchantId, // Ensure this is extracted safely
               timestamp: new Date().toISOString()
-            });
+            }
             ```
     2.  **Modify `assignRobot` in `demand.repo.ts`**:
         -   Import `Events` from registry.
         -   After successful assignment (inside the transaction or immediately after):
-        -   Call `this.logger.event`:
+        -   Call `this.logger.info`:
             ```typescript
-            this.logger.event(Events.DEMAND_ASSIGNED, {
+            {
+              event: Events.DEMAND_ASSIGNED,
               demand_id: demandId,
               robot_id: serial,
               timestamp: new Date().toISOString()
-            });
+            }
             ```
 - **Verification**:
     1.  Run `turbo run test --filter=dispatch-engine`.
-    2.  **Crucial**: Inspect the test console output. You MUST see the JSON log line containing `"event": "demand.created"` and `"merchant_id"`. If existing tests don't trigger it, modify a test in `demand.service.spec.ts` to verify the spy on `logger.event` (or `logger.log` if mocked) was called with these exact parameters.
+    2.  **Crucial**: Inspect the test console output. You MUST see the JSON log line containing `"event": "demand.created"` and `"merchant_id"`. If existing tests don't trigger it, modify a test in `demand.service.spec.ts` to verify the spy on `logger.info` was called with these exact parameters.
 - **Status**: [ ]
 
 ### Task 2.2: Instrument Deliveries Service (Quote/Delivery)
@@ -214,9 +180,9 @@
 - **Exact Changes**:
     1.  **Modify `request` method in `robot.service.ts`**:
         -   Find where `this.engine.confirmDemand` is called.
-        -   Log `Events.DEMAND_CONFIRMED` using `this.logger.event` with `quote_id: quote.id` and `merchant_id: params.merchantId`.
+        -   Log `Events.DEMAND_CONFIRMED` with `quote_id: quote.id` and `merchant_id: params.merchantId`.
     2.  **Modify `DeliveryService` methods**:
-        -   In methods handling pickup/dropoff completion (search for status updates to `PickedUp` or `Delivered`), log `Events.DELIVERY_PICKUP_COMPLETED` and `Events.DELIVERY_DROPOFF_COMPLETED` using `this.logger.event`.
+        -   In methods handling pickup/dropoff completion (search for status updates to `PickedUp` or `Delivered`), log `Events.DELIVERY_PICKUP_COMPLETED` and `Events.DELIVERY_DROPOFF_COMPLETED`.
         -   Ensure `delivery_id` is included in the log payload.
 - **Verification**:
     1.  Run `turbo run test --filter=deliveries`.
@@ -230,10 +196,10 @@
     - `delivery-platform/service/operations/src/modules/pilots/pilot-assignments/repositories/repo.service.ts`
 - **Exact Changes**:
     1.  **Modify `activatePilotTrip` in `pilot-trips.service.ts`**:
-        -   Log `Events.TRIP_ACTIVATED` using `this.logger.event` with `trip_id: tripId` and `robot_id: botSerial`.
+        -   Log `Events.TRIP_ACTIVATED` with `trip_id: tripId` and `robot_id: botSerial`.
     2.  **Modify `savePilotAssignedToTrip` in `repo.service.ts`**:
         -   This method already has `meta` containing `deliveryId`.
-        -   Log `Events.PILOT_ASSIGNED` using `this.logger.event` with:
+        -   Log `Events.PILOT_ASSIGNED` with:
             -   `trip_id`: `tripId`
             -   `pilot_id`: `pilotId`
             -   `delivery_id`: `meta.deliveryId` (Critical for joining!)
@@ -247,10 +213,10 @@
 - **Files**: `delivery-platform/service/dispatch-engine/src/modules/planner/service/replan.service.ts`
 - **Exact Changes**:
     1.  **Modify `rehomeOrphanedDelivery`**:
-        -   After successful re-assignment, log `Events.DEMAND_REPLAN_REHOMED` using `this.logger.event`.
+        -   After successful re-assignment, log `Events.DEMAND_REPLAN_REHOMED`.
         -   Include: `demand_id: request.requestId`, `robot_id: estimate.deviceId` (the *new* robot).
     2.  **Modify `orphanDelivery`**:
-        -   Log `Events.DEMAND_REPLAN_ORPHANED` using `this.logger.event`.
+        -   Log `Events.DEMAND_REPLAN_ORPHANED`.
         -   Include: `demand_id: request.requestId`, `robot_id: request.deviceId` (the *old* robot).
 - **Verification**:
     1.  Run `turbo run test --filter=dispatch-engine -- --testPathPattern=replan.service.spec.ts`.
@@ -262,7 +228,7 @@
 - **Files**: `delivery-platform/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts`
 - **Exact Changes**:
     1.  Examine `StateChangeEvent` payload.
-    2.  If `tripId` is missing, log a warning or a new event `Events.ROBOT_STATE_CONTEXT` (using `this.logger.event`) that includes `robot_id` and `trip_id` if available in the handler's scope (e.g., by fetching the robot's current state from DB).
+    2.  If `tripId` is missing, log a warning or a new event `Events.ROBOT_STATE_CONTEXT` that includes `robot_id` and `trip_id` if available in the handler's scope (e.g., by fetching the robot's current state from DB).
     3.  *Decision*: If fetching DB state is too expensive on every event, document this limitation in `obsidian/research/Observability_Lifecycle_Analysis.md` and rely on time-window joins in dbt.
 - **Verification**:
     -   Document the decision in the Research doc.

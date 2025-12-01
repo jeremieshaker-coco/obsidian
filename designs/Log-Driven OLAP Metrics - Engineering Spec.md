@@ -71,9 +71,9 @@ A key architectural decision is **Source Filtering**. We do *not* ingest all log
 
 ## Code Changes Required
 
-### Minimal: Add `event` Property to Key Logs
+### Minimal: Use `logger.event()`
 
-**Pattern**: Use events from a centralized registry (not free-form strings).
+**Pattern**: Use the new dedicated `event()` method on the logger, coupled with the centralized registry.
 
 **TypeScript (NestJS)**:
 ```typescript
@@ -87,8 +87,7 @@ this.logger.log('Robot state changed', {
 // ✅ After - captured for Analytics, using registry
 import { Events } from '@coco/common/events';
 
-this.logger.log('Robot state changed', {
-  event: Events.ROBOT_STATE_CHANGED,  // ← From registry (autocomplete, type-safe)
+this.logger.event(Events.ROBOT_STATE_CHANGED, {
   robot_id: robotId,
   from_state: 'idle',
   to_state: 'delivering',
@@ -105,12 +104,11 @@ log.Info(ctx, "Robot state changed",
 )
 
 // ✅ After
-log.Info(ctx, "Robot state changed", 
-  log.WithField("event", "robot.state_changed"),  // ← Match TS registry naming
-  log.WithField("robot_id", robotID),
-  log.WithField("from_state", "idle"),
-  log.WithField("to_state", "delivering"),
-)
+log.Event(ctx, "robot.state_changed", map[string]interface{}{
+  "robot_id": robotID,
+  "from_state": "idle",
+  "to_state": "delivering",
+})
 ```
 
 ### Event Registry: The Single Source of Truth
@@ -416,7 +414,7 @@ This architecture creates a clear promotion path for observability:
 
 ## Implementation Phases
 
-See the [Implementation Plan](Log-Driven%20OLAP%20Metrics%20-%20Implementation%20Plan.md) for a detailed, task-by-task breakdown.
+See the [Implementation Plan](Log-Driven%20OLAP%20Metrics%20-%20Implementation%20Plan%201.md) for a detailed, task-by-task breakdown.
 
 ### Phase 1: Infrastructure (2 weeks)
 - [ ] Create S3 bucket with lifecycle policies
