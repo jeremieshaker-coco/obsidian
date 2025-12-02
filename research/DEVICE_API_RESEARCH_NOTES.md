@@ -153,6 +153,34 @@ interface IWebhookEvent {
 
 ([`IWebhookEvent` source](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/drive-u/interfaces/webhook-event.interface.ts))
 
+### Physical Robots (MQTT to Kafka Bridge)
+
+While the `State Service` consumes MQTT messages for its own processing, there is a parallel path that forwards raw telemetry directly to Kafka for the `Fleet Service`. This is handled by a dedicated bridge service.
+
+**MQTT-to-Kafka Bridge Flow**:
+```mermaid
+sequenceDiagram
+    participant Robot as Physical Robot
+    participant AWS as AWS IoT Core
+    participant SQS as SQS
+    participant Bridge as Robot Service (sqsHeartbeatConsumer)
+    participant Kafka as MSK Kafka
+    participant Fleet as Fleet Service
+
+    Robot->>AWS: Publishes MQTT message (e.g., `robot/+/status`)
+    AWS->>SQS: IoT Rule forwards message to an SQS queue
+    SQS->>Bridge: Consumes message from queue
+    Bridge->>Kafka: Produces message to Kafka topic (e.g., `robot_platform_robot_updates_v1`)
+    Kafka->>Fleet: Consumes message from Kafka topic
+```
+
+This flow acts as a high-throughput bridge to get raw robot telemetry into the Kafka ecosystem for real-time processing by consumers like the `Fleet Service`. The key component is the `robot` service:
+
+1.  **MQTT to SQS**: An AWS IoT Rule, which was manually configured and is not present in Terraform, routes raw MQTT messages from robots to a dedicated SQS queue.
+2.  **SQS Consumption**: A Go service, [`sqsHeartbeatConsumer`](https://github.com/cocorobotics/coco-services/blob/master/robot/cmd/sqs_heartbeat_consumer.go), consumes messages from this queue.
+3.  **Kafka Production**: For each message it receives, this service instantiates a [`kafka.NewProducer`](https://github.com/cocorobotics/coco-services/blob/master/core/kafka/producer.go) and publishes the payload to a Kafka topic.
+4.  **Fleet Service Consumption**: As documented previously, the `Fleet Service`'s [`robot_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/robot_consumer.go) subscribes to this Kafka topic to receive the real-time telemetry.
+
 ### AWS Greengrass (Software Management)
 
 **Integration Flow**:
