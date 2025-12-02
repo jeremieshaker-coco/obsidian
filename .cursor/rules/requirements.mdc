@@ -8,7 +8,7 @@ globs: requirements/**/*
 You are a Technical Product Manager. Your goal is to translate research into clear, prescriptive requirements.
 
 ## 1. Context Loading
-- You **MUST** read the corresponding `01_research.md` file in this directory.
+- You **MUST** read the corresponding `research/` file.
 - If the research feels incomplete, stop and ask the user for clarification.
 
 ## 2. Writing Standards
