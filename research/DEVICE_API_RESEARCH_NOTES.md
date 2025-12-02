@@ -1,142 +1,465 @@
-# Device API Research Notes
+# System Overview
 
-## Executive Summary
+This diagram illustrates the entire ecosystem: how data flows from robots and external providers into our system, how it propagates between internal services, and how it is finally consumed by internal applications and external partners.
 
-Multiple services independently process MQTT/IoT events from robots, leading to:
-- **Disparate state representations** across services
-- **Varying data freshness** due to different processing times and caching strategies
-- **No single source of truth** for device state
-- **Inconsistent schemas** for similar device information
-- **Error-prone** due to different event processing logic and potential message drops
+```mermaid
+graph TD
+    subgraph "Sources of Truth"
+        Robot[Physical Robot]
+        DriveU[DriveU Cloud]
+        AWS["AWS Cloud APIs <br/>(IoT, Greengrass)"]
+    end
 
-## Event Flow Architecture
+    subgraph "Infrastructure Layer"
+        Lambda[APIGW-to-SQS Lambda]
+    end
 
-### 1. Event Ingestion
-- **Source**: Robots send MQTT messages via AWS IoT
-- **Queues**: Events are routed to two SQS queues:
-  - `eventsQueueUrl` - Robot events (lid events, pin entry events)
-  - `stateQueueUrl` - Heartbeat/state messages
-- **Processor**: `IotStreamerService` (`service/state/src/iot-streamer/iot-streamer.service.ts`)
+    subgraph "Ingestion & Processing Layer"
+        StateSvc[State Service]
+        Fleet[Fleet Service]
+        LegacyDev[Legacy Device Svc]
+    end
 
-### 2. Event Processing
-The `IotStreamerService` processes events and publishes to RabbitMQ:
-- **Heartbeat Exchange**: `IoT.Heartbeat` - Contains battery, location, health, components, operationState
-- **Health State Exchange**: `IoT.HealthStateChanged` - Published when health status changes
-- **Lid Cycle Events**: Various lid-related events
-- **Pin Entry Events**: `Robots.PinEntry`, `Robots.LidOpen`, `Robots.LidClose`
+    subgraph "Core Business Logic"
+        OpsSvc[Operations Service]
+        Dispatch[Dispatch Engine]
+        TripMon[Trip Monitor]
+        IntSvc[Integrations Service]
+    end
 
-### 3. Event Consumers
+    subgraph "Applications & Consumers"
+        MDS[MDS Service]
+        MC[Mission Control]
+    end
 
-#### State Service (`service/state`)
-- **Role**: Primary event processor and state tracker
-- **Storage**: 
-  - `stateHistory` table (Prisma) - Stores robot state transitions
-  - DynamoDB (via `StateTrackerService`) - Stores latest DriveU status
-- **Publishes**: Heartbeat events, health state changes, lid cycle events
-- **Key Files**:
-  - `iot-streamer.service.ts` - Main event processor
-  - `state.service.ts` - State management and queries
-  - `heartbeat.service.ts` - Aggregates and stores heartbeats
+    subgraph "External Partners"
+        Uber[Uber]
+        DoorDash[DoorDash]
+    end
+    
+    %% Data Flows
 
-#### Operations Service (`service/operations`)
-- **Role**: Business logic and robot state management
-- **Consumes**: 
-  - `IoT.Heartbeat` - Updates ephemeral data and saves heartbeats
-  - `Robots.StateChange` - Updates robot state history
-- **Storage**:
-  - `RobotStateHistory` table (Prisma) - Historical state changes
-  - Redis cache - Ephemeral device info (location, battery, health, state)
-  - DynamoDB (via `RobotEphemeralDataService`) - Latest device info
-- **Key Files**:
-  - `iot-heartbeat-handler.ts` - Processes heartbeats
-  - `robot-state-change-handler.ts` - Processes state changes
-  - `robot-ephemeral-data.service.ts` - Manages cached ephemeral data
-  - `robots.service.ts` - Robot business logic
-- **APIs**:
-  - `GET /robots/:serial/state` - Current robot state
-  - `GET /robots/:serial/status` - Robot status
-  - `GET /internal/robots` - Internal robot list
-  - `GET /robots/:serial/location` - Robot location
+    %% Ingestion (Push)
+    Robot -->|MQTT -> SQS| StateSvc
+    DriveU -->|Webhook| Lambda
+    Lambda -->|SQS| StateSvc
+    Robot -->|Kafka| Fleet
 
-#### Dispatch Engine (`service/dispatch-engine`)
-- **Role**: Planning and resource allocation
-- **Consumes**:
-  - `IoT.Heartbeat` - Updates robot supply (battery, location, health, operationState)
-  - `Robots.StateChange` - Updates robot supply attributes (needsMovement, hasFood, etc.)
-- **Storage**:
-  - `Resource` table (Prisma) - Stores Robot/Pilot as JSON in `data` field
-  - `Robot` table (Prisma) - V2 robot representation with demand relationships
-- **Key Files**:
-  - `iot-heartbeat.handler.ts` - Maps heartbeats to supply events
-  - `robot-stage-change.handler.ts` - Maps state changes to supply events
-  - `supply.repo.ts` - Robot/Pilot data access
-- **Data Model**: Uses `RobotSupply` type with fields like `battery`, `healthy`, `location`, `operationState`, `needsMovement`, `hasFood`, `tripType`, `needsMaintenance`, etc.
+    %% Event Propagation (Push)
+    StateSvc --"Publishes Events (RabbitMQ)"--> OpsSvc
+    StateSvc --"Publishes Events (RabbitMQ)"--> Dispatch
+    StateSvc --"Publishes Events (RabbitMQ)"--> Fleet
+    StateSvc --"Publishes Events (RabbitMQ)"--> TripMon
+    StateSvc --"Publishes Events (RabbitMQ)"--> IntSvc
+    
+    %% Data Retrieval (Pull/Query)
+    OpsSvc -.->|"RPC"| StateSvc
+    MDS -.->|"HTTP GET"| OpsSvc
+    MC -.->|"HTTP GET"| OpsSvc
+    MC -.->|"HTTP GET"| LegacyDev
+    LegacyDev <-.->|"AWS SDK"| AWS
+    
+    Fleet -.->|"gRPC API"| Uber
+    IntSvc -->|"HTTP POST"| DoorDash
 
-#### Trip Monitor (`service/trip-monitor`)
-- **Role**: Trip tracking and monitoring
-- **Consumes**: `IoT.Heartbeat` - Updates trip state from heartbeat data
-- **Storage**: Trip state database
-
-#### Fleet Service (`coco-services/fleet`)
-- **Role**: Fleet management and provider integrations
-- **Consumes**: 
-  - Kafka messages (protobuf) - Physical robot telemetry
-  - RabbitMQ messages - Operations system business logic
-- **Storage**: DynamoDB (`FleetRobot` entities)
-- **Data Model**: Stores `Healthy`, `OperationalState`, `Location`, `HasFood`, `NeedsMaintenance`
-
-## Data Models & Schemas
-
-### State Service Models
-```typescript
-// Heartbeat payload
-{
-  serial: string;
-  createdAt: number;
-  receivedAt: number;
-  processedAt: number;
-  battery?: { soc: number; isCharging: boolean; sn?: string };
-  location?: { latitude: number; longitude: number; heading: number; errHorz: number; updatedAt: number };
-  healthy: boolean;
-  components: Record<string, Component>;
-  operationState?: OperationState; // 'GROUNDED' | 'ON_TRIP' | 'PARKED' | 'OFF_DUTY'
-}
 ```
 
-### Operations Service Models
-```typescript
-// RobotStateHistory (Prisma)
-{
-  robotSerial: string;
-  needsMovement: boolean;
-  hasFood: boolean;
-  tripType: TripType;
-  operationState: RobotStateEventState; // ON_TRIP | PARKED | GROUNDED | OFF_DUTY | DEPLOYED
-  needsMaintenance: boolean;
-  needsPickup: boolean;
-  driveable: boolean;
-  undergoingMaintenance: boolean;
-  createdAt: DateTime;
-}
+---
 
-// Ephemeral Device Info (Redis/DynamoDB)
-{
-  serial: string;
-  location: { lat: number; lng: number; timestamp: number };
-  battery: { currentBatteryPercentage: number; timestamp: number };
-  healthy: boolean;
-  robotState: RobotState; // GROUNDED | ON_TRIP | PARKED | etc.
-}
+## Phase 1: Sources & Ingestion
+
+The data lifecycle begins with raw telemetry and status updates from the physical world.
+
+### Physical Robots (MQTT)
+
+- **Protocol**: MQTT via AWS IoT.
+- **Data**: Telemetry (Location, Battery), Connectivity.
+- **Ingestion**: Routed to SQS (`eventsQueueUrl`, `stateQueueUrl` defined in [`service/state/src/config/config.loader.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/config/config.loader.ts)).
+
+**On-Robot Publishing Flow**:
+The robot runs ROS (Robot Operating System), and data is published from various sensor nodes to a central aggregator, which then forwards the data to the cloud via an MQTT bridge.
+
+```mermaid
+sequenceDiagram
+    participant Sensor as Sensor Node (e.g., GPS, Battery)
+    participant Aggregator as mqtt_reporter
+    participant Bridge as mqtt_bridge
+    participant AWS as AWS IoT Core
+    participant SQS as SQS
+    participant StateSvc as State Service
+
+    Sensor->>Aggregator: Publishes ROS Message (e.g., sensor_msgs/NavSatFix)
+    Aggregator->>Aggregator: Consumes various topics & aggregates into HardwareStatus
+    Aggregator->>Bridge: Publishes aggregated ROS Message (mqtt_reporter_msgs/HardwareStatus)
+    Bridge->>AWS: Forwards as MQTT message to `robot/+/status` topic
+    AWS->>SQS: IoT Rule routes message to SQS
+    SQS->>StateSvc: State Service consumes message
+
 ```
 
-### Dispatch Engine Models
-```typescript
-// RobotSupply
-{
-  robotSerial: string;
+The flow is orchestrated by these key components:
+
+1. **Sensor Nodes**: Standard ROS nodes that interface with the hardware (GPS, battery controller, etc.) and publish their data to specific topics on the internal ROS message bus.
+2. **Aggregator (`mqtt_reporter`)**: The [`hardware_status_aggregator.py`](https://github.com/cocorobotics/coco-acu/blob/develop/src/hardware_fail_detection/mqtt_reporter/src/mqtt_reporter/hardware_status_aggregator.py) node subscribes to many different sensor topics. It collects and aggregates this data into a single, comprehensive `HardwareStatus` message.
+3. **Bridge (`mqtt_bridge`)**: This is a generic ROS-to-MQTT bridge. It subscribes to the `HardwareStatus` ROS topic and, based on its configuration in [`topics.yaml`](https://github.com/cocorobotics/coco-acu/blob/develop/src/mqtt_bridge/config/topics.yaml), publishes the content of that message to an AWS IoT MQTT topic (e.g., `robot/123/status`). The core logic for this is in [`bridge.py`](https://github.com/cocorobotics/coco-acu/blob/develop/src/mqtt_bridge/src/mqtt_bridge/bridge.py).
+4. **Backend Consumer**: As previously detailed, the message is routed via an AWS IoT Rule to an SQS queue, which is consumed by the [`IotStreamerService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/iot-streamer/iot-streamer.service.ts) in the `State Service`.
+
+### DriveU (Teleoperation)
+
+**Role**: Provides low-latency video streaming and remote control connectivity status.
+
+**DriveU Status Write Path**:
+The following diagram shows how the raw webhook event, once ingested into SQS, gets processed and ultimately saved to DynamoDB.
+
+```mermaid
+sequenceDiagram
+    participant SQS as SQS (connectivityQueueUrl)
+    participant CEH as ConnectivityEventHandler
+    participant RMQ as RabbitMQ
+    participant DSH as DriveuStatusHandler
+    participant STS as StateTrackerService
+    participant DDB as DynamoDB (DriveU Status)
+
+    SQS->>CEH: Consume raw webhook message
+    CEH->>CEH: Normalize payload
+    CEH->>RMQ: Publish ConnectivityRawStatusChanged
+    RMQ->>DSH: Consume event
+    DSH->>STS: saveLatestDriveUStatus(status)
+    STS->>DDB: PUT Item
+
+```
+
+The flow is as follows:
+
+1. **SQS Consumption**: The [`ConnectivityEventHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/connectivity/connectivity-event.handler.ts) consumes the raw event from the `connectivityQueueUrl` SQS queue.
+2. **Event Publication**: It normalizes the data and publishes a new event, `ConnectivityRawStatusChanged`, to a RabbitMQ exchange.
+3. **Status Handling**: The [`DriveuStatusHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/driveu/driveu-status.handler.ts) subscribes to this RabbitMQ exchange.
+4. **Database Write**: Upon receiving an event, the handler calls the [`saveLatestDriveUStatus`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/state-tracker/state-tracker.service.ts) method on the `StateTrackerService`, which is responsible for writing the final status object to DynamoDB.
+
+**DriveU Webhook Schema**:
+
+```tsx
+// See: delivery-platform/lib/common/src/drive-u/interfaces/webhook-event.interface.ts
+interface IWebhookEvent {
+  eventName: 'status';
+  unit: 'streamer' | 'node' | 'relay';
+  status: string; // e.g., 'online', 'offline', 'connectedToNode'
+  uuid: string;   // used for serial mapping
+  vin: string | null;
+  time: number;   // timestamp in microseconds
+}
+
+```
+
+([`IWebhookEvent` source](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/drive-u/interfaces/webhook-event.interface.ts))
+
+### AWS Greengrass (Software Management)
+
+**Integration Flow**:
+
+```mermaid
+sequenceDiagram
+    participant MC as Mission Control UI
+    participant Legacy as Legacy Device Svc (Backend)
+    participant AWS as AWS Cloud (Greengrass V2 API)
+    participant Agent as Robot (Greengrass Agent)
+
+    Note over MC, Agent: 1. Create Deployment (Push)
+    MC->>Legacy: POST /deployments (Create Deployment)
+    Legacy->>AWS: GreengrassV2.CreateDeployment
+    AWS->>AWS: Store Deployment Config
+    AWS-->>Agent: IoT Job / Notification
+    Agent->>Agent: Download & Install Components
+    Agent-->>AWS: Report Status (IN_PROGRESS -> SUCCEEDED)
+
+    Note over MC, Agent: 2. Monitor Status (Pull)
+    MC->>Legacy: GET /device/:serial?with=components,deployments
+    Legacy->>Legacy: deviceService.getDeviceDetails()
+    Legacy->>Legacy: awsGgService.getCoreDeviceStatus()
+    Legacy->>AWS: GreengrassV2.GetCoreDevice
+    Legacy->>Legacy: awsGgService.listInstalledComponents()
+    Legacy->>AWS: GreengrassV2.ListInstalledComponents
+    AWS-->>Legacy: { coreDeviceStatus, installedComponents, ... }
+    Legacy-->>MC: Aggregated Device Details Response
+
+```
+
+The **Legacy Device Service** (`service/device`) acts as a proxy to AWS Cloud APIs for low-level software lifecycle management, primarily serving Mission Control. This service does not have a dedicated `/greengrass` endpoint. Instead, it aggregates Greengrass data into its main device details endpoint.
+
+The flow works as follows:
+
+1. **API Request**: A client, like Mission Control, makes a request to the `GET /device/:serial` endpoint, optionally including `?with=components,deployments` to request detailed software information. This endpoint is handled by the [`DeviceController`](https://github.com/cocorobotics/delivery-platform/blob/main/service/device/src/device/device.controller.ts).
+2. **Service Aggregation**: The controller passes the request to the [`DeviceService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/device/src/device/device.service.ts). Inside the `getDeviceDetails` method, it fetches data from multiple sources.
+3. **AWS SDK Calls**: The `DeviceService` uses the [`AwsGgService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/device/src/aws/aws-gg.service.ts) to make several calls to the AWS Greengrass V2 API in the cloud:
+    - `getCoreDeviceStatus()`: To get the basic health of the Greengrass agent.
+    - `listInstalledComponents()`: To get a list of all software packages and their versions on the robot.
+    - `getDetailedDeployments()`: To get the history of software deployment jobs.
+4. **Response**: The `DeviceService` combines all this information into a single JSON response for the client.
+
+**Key Schemas**:
+The data structures for Greengrass objects are defined by the AWS SDK and aliased for clarity in [`service/device/src/aws/typings/aws-gg.interface.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/device/src/aws/typings/aws-gg.interface.ts).
+
+- **`InstalledComponent`**: Represents a piece of software running on the robot.
+    - `componentName`: The name of the software package (e.g., `com.example.MyApplication`).
+    - `componentVersion`: The semantic version of the package.
+    - `lifecycleState`: The current status of the component (`RUNNING`, `ERRORED`, `BROKEN`, etc.).
+- **`CoreDevice`**: Represents the robot's Greengrass instance itself.
+    - `status`: An overall health status (`HEALTHY` or `UNHEALTHY`).
+    - `lastStatusUpdateTimestamp`: The last time the device reported its status to the cloud.
+
+---
+
+## Phase 2: Processing & Persistence
+
+Once ingested, data is normalized, enriched with business logic, and persisted.
+
+### State Service (The Processor)
+
+- **Role**: Raw event ingestion, normalization, and initial persistence.
+- **Persistence**: [`StateHistory`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/prisma/schema.prisma) (PostgreSQL), DriveU Status (DynamoDB).
+- **Outputs**: Publishes normalized events to RabbitMQ ([`IoT.Heartbeat`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts), [`Robots.StateChange`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)).
+
+**Processing Flow (Heartbeat Write Path)**:
+
+```mermaid
+sequenceDiagram
+    participant R as Robot
+    participant IoT as AWS IoT/SQS
+    participant S as State Service
+    participant DDB as DynamoDB (DriveU Status)
+    participant PG as PostgreSQL (StateHistory)
+    participant RMQ as RabbitMQ
+
+    R->>IoT: MQTT Heartbeat
+    IoT->>S: SQS Message
+    S->>DDB: GetLatestDriveUStatus
+    DDB-->>S: DriveU Status
+    S->>S: Normalize & Enrich Data
+    S->>PG: Save to StateHistory
+    S->>RMQ: Publish IoT.Heartbeat
+
+```
+
+This diagram shows the main "hot path" for real-time robot telemetry. The process is as follows:
+
+1. **Ingestion**: A robot publishes an MQTT message. An AWS IoT Rule routes it to an SQS queue (e.g., `eventsQueueUrl` defined in [`config.loader.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/config/config.loader.ts)).
+2. **Consumption**: The [`IotStreamerService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/iot-streamer/iot-streamer.service.ts) in the `State Service` consumes the raw message from the queue.
+3. **Enrichment**: Inside the `processMessage` method, the service enriches the raw telemetry:
+    - It calls [`getLatestDriveUStatus`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state-tracker/state-tracker.service.ts) on the `StateTrackerService` to fetch the most recent DriveU connectivity status from **DynamoDB**. This determines if the robot is remotely controllable.
+4. **Persistence**: The enriched data is persisted to the [`StateHistory`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/prisma/schema.prisma) table in **PostgreSQL**.
+5. **Fan-out**: Finally, the service uses its [`amqpConnection`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/iot-streamer/iot-streamer.service.ts#L44) to publish a clean, enriched [`IoT.Heartbeat`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) event to a RabbitMQ fan-out exchange, making it available to all interested downstream services.
+
+**State Service Schema**:
+
+```
+model StateHistory {
+  serial    String
+  date      DateTime
+  state     String   // GROUNDED, ON_TRIP, PARKED, OFF_DUTY
+  details   Json?
+  @@id([serial, date])
+}
+
+```
+
+### Operations Service (The Business Logic)
+
+- **Role**: Applies business rules (maintenance toggles, operational readiness) to raw state.
+- **Persistence**: [`RobotStateHistory`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/prisma/schema.prisma) (PostgreSQL), Ephemeral Data (Redis). The Redis cache is managed by the [`RobotEphemeralDataService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robot-ephemeral-data.service.ts) and holds transient state like connectivity and component health.
+- **Outputs**: `RobotStateHistory` updates, Redis cache updates.
+
+**Processing Flow (State Change Write Path)**:
+
+```mermaid
+sequenceDiagram
+    participant S as State Service
+    participant RMQ as RabbitMQ
+    participant O as Operations Service
+    participant PG as Ops DB (Postgres)
+    participant Redis as Ops Redis
+
+    S->>S: Detect State Transition
+    S->>RMQ: Publish Robots.StateChange
+    RMQ->>O: Consume StateChange
+    O->>PG: Update RobotStateHistory
+    O->>Redis: Invalidate/Update Cache
+
+```
+
+This diagram illustrates how changes in a robot's core state (e.g., from `PARKED` to `ON_TRIP`) are processed and enriched with business logic.
+
+1. **Detection**: The [`StateService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/state.service.ts) in the `State Service` detects a significant state transition while processing incoming telemetry.
+2. **Publication**: It publishes a discrete [`Robots.StateChange`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) event to RabbitMQ.
+3. **Consumption**: A handler in the `Operations Service`, such as the [`IotHeartbeatHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/handlers/iot-heartbeat-handler.ts), consumes this event.
+4. **Business Logic & Persistence**: The handler applies business rules (e.g., checking for maintenance flags via [`getRobotOperationalReadinessIssue`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robots.service.ts)) and then updates its own [`RobotStateHistory`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/prisma/schema.prisma) table in **PostgreSQL**.
+5. **Cache Update**: It also updates its **Redis** cache via the [`RobotEphemeralDataService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robot-ephemeral-data.service.ts) to ensure subsequent on-demand reads have the freshest data.
+
+**Operations Service Schema**:
+
+```
+model RobotStateHistory {
+  robotSerial           String
+  operationState        RobotStateEventState // ON_TRIP, PARKED, GROUNDED, OFF_DUTY, DEPLOYED
+  needsMovement         Boolean
+  undergoingMaintenance Boolean
+  hasFood               Boolean
+  driveable             Boolean
+}
+
+```
+
+### Fleet Service (The Hybrid Consumer)
+
+- **Role**: Fleet management and provider integrations (Uber).
+- **Data Sources**:
+    - **Kafka ([`robot_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/robot_consumer.go))**: Consumes raw robot telemetry (GPS, Battery) directly.
+    - **RabbitMQ ([`legacy_robots_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/consumer.go))**: Consumes business events from Operations System (HasFood, NeedsMaintenance).
+- **Persistence**: [`fleet-robots`](https://github.com/cocorobotics/coco-services/blob/master/infra/configs/fleet/consumers/robot_consumer/values.yaml.tpl) (DynamoDB) - Aggregates telemetry + business state.
+
+**Processing Flow**:
+
+```mermaid
+graph LR
+    subgraph Inputs
+        K[Kafka: robot_platform_robot_updates_v1]
+        R[RabbitMQ: Operations Events]
+    end
+
+    subgraph Fleet Service
+        RC[robot_consumer]
+        LRC[legacy_robots_consumer]
+        DB[(DynamoDB: fleet-robots)]
+        Redis[(Redis Cache)]
+    end
+
+    K --> RC
+    R --> LRC
+    RC -->|Enrich & Cache| Redis
+    RC -->|Update Telemetry| DB
+    LRC -->|Update Business State| DB
+
+```
+
+This diagram shows the dual-ingestion model of the Fleet Service, which separates high-frequency telemetry from lower-frequency business state updates.
+
+1. **Telemetry Path (High-Frequency)**: Raw telemetry (location, battery, etc.) is consumed from the `robot_platform_robot_updates_v1` Kafka topic by the [`robot_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/robot_consumer.go). This consumer writes the data to a Redis cache for fast, low-latency access and also persists it to the `fleet-robots` DynamoDB table.
+2. **Business State Path (Low-Frequency)**: Slower-moving business state changes (e.g., `hasFood`, `needsMaintenance`) are consumed from a RabbitMQ exchange (populated by the Operations Service) by the [`legacy_robots_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/consumer.go). This consumer updates the corresponding fields on the existing robot item in the `fleet-robots` DynamoDB table.
+
+This hybrid approach allows the service to handle high-volume telemetry efficiently via Kafka while still reacting to important business events propagated through RabbitMQ.
+
+### Redis Cache Schema
+
+The Fleet Service uses Redis for high-frequency caching of telemetry data.
+
+- **Key**: `robot.heartbeat.cache.<serial>`
+- **Value**: A JSON-marshalled `foundation.RobotState` struct.
+- **Source Code**: The schema is defined in [`coco-services/core/foundation/robot.go`](https://github.com/cocorobotics/coco-services/blob/master/core/foundation/robot.go).
+- **Logic**: The gRPC handler in [`grpc_labor_scope.go`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/handlers/grpc/grpc_labor_scope.go) reads from this cache to serve requests for available robots.
+
+```go
+// coco-services/core/foundation/robot.go
+type RobotState struct {
+	Serial         string              `json:"serial"`
+	Healthy        bool                `json:"healthy"`
+	Battery        RobotBattery        `json:"battery"`
+	Location       RobotLocation       `json:"location"`
+	Components     RobotComponents     `json:"components"`
+	OperationState RobotOperationState `json:"operationState"`
+    // ... timestamps
+}
+
+```
+
+### DynamoDB Schema (`fleet-robots` table)
+
+This is the primary operational data store for the Fleet Service, aggregating telemetry and business state.
+
+- **Source Code**: The schema is defined by the `FleetRobot` struct in [`coco-services/fleet/internal/entities/fleet_robot.go`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/entities/fleet_robot.go).
+- **Key Fields**:
+    - `PK`/`SK`: `FLEETROBOT#<uuid>`
+    - `Serial`: The robot's serial number.
+    - `Healthy`: A boolean indicating overall health.
+    - `OperationalState`: The business state from the Operations system (`ON_TRIP`, `PARKED`, etc.).
+    - `Latitude`/`Longitude`: GPS coordinates.
+    - `HasFood`/`NeedsMaintenance`: Business flags from the Operations system.
+
+```go
+// coco-services/fleet/internal/entities/fleet_robot.go
+type FleetRobot struct {
+	PK string `dynamodbav:"PK"`
+	SK string `dynamodbav:"SK"`
+
+	Serial string `dynamodbav:"Serial"`
+
+	Healthy          bool                           `dynamodbav:"Healthy"`
+	OperationalState foundation.RobotOperationState `dynamodbav:"OperationalState"`
+
+	Latitude     float64      `dynamodbav:"Latitude"`
+	Longitude    float64      `dynamodbav:"Longitude"`
+
+	HasFood          *bool `dynamodbav:"HasFood,omitempty"`
+	NeedsMaintenance *bool `dynamodbav:"NeedsMaintenance,omitempty"`
+
+	// ... timestamps and other fields
+}
+
+```
+
+### APIs
+
+The Fleet Service exposes its data primarily through a **gRPC API** (and a corresponding HTTP gateway). It offers two main service scopes for consumers:
+
+1. **`FleetLaborProviderScopeService`**: Exposes the [`Get` method](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/handlers/grpc/grpc_labor_scope.go) to provide real-time robot state (location, battery, status) by reading directly from the Redis cache. This is optimized for high-frequency requests.
+2. **`FleetBeaconScopeService`**: Exposes methods like [`GetVirtualRobot` and `GetExternalRobotMappings`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/handlers/grpc/grpc_beacon_scope.go) that query DynamoDB. This is used to link provider-specific identifiers (e.g., from Uber) to our internal `FleetRobot` entities.
+
+### Dispatch Engine (The Planner's Cache)
+
+- **Role**: Maintains a near real-time cache of available robots (`supply`) to make high-performance planning decisions without querying other services.
+- **Persistence**: `Resource` table (PostgreSQL) with an in-memory/Redis cache. Robot state is stored in a `jsonb` column, using the `LegacyRobot` type as its schema.
+- **Outputs**: An up-to-date `Resource` table and a populated cache that the `SupplyService` can read from.
+
+**Processing Flow (Event Cache Write Path)**:
+The Dispatch Engine uses a two-step internal event queue to process data. This decouples the initial event ingestion from the business logic that updates the supply cache. The repository layer is responsible for invalidating the cache upon writes to ensure data consistency.
+
+```mermaid
+sequenceDiagram
+    participant RMQ as RabbitMQ
+    participant IHH as IotHeartbeatHandler
+    participant SEH as SupplyEventHandler
+    participant Repo as SupplyRepo
+    participant DB as Dispatch DB (Postgres)
+    participant Cache as In-Memory Cache
+
+    RMQ->>IHH: Consume IoT.Heartbeat
+    IHH->>IHH: Transform to RobotSupplyPayload
+    IHH->>RMQ: Publish DispatchEngine.SupplyEvent
+    RMQ->>SEH: Consume DispatchEngine.SupplyEvent
+    SEH->>Repo: processRobotSupply(payload)
+    Repo->>DB: UPSERT INTO Resource (data = jsonb)
+    Repo->>Cache: DEL cache key
+
+```
+
+The data is handled by two main components:
+
+1. **Ingestion Handlers**: Services like [`IotHeartbeatHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/iot-heartbeat.handler.ts) and [`RobotStageChangeHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts) subscribe to external events from the `State Service`. Their sole job is to transform these events into a standardized internal `DispatchEngine.SupplyEvent` and publish it back to RabbitMQ.
+2. **Supply Logic**: The [`SupplyEventHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/supply/handlers/supply-event.handler.ts) consumes this internal event. It uses the [`SupplyRepo`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/supply/repo/supply.repo.ts) to perform an `upsert` into the `Resource` table, which also deletes the relevant key from the in-memory cache to ensure subsequent reads get fresh data.
+
+**Dispatch Engine Schema (`LegacyRobot`)**:
+This is the structure stored as a JSON object in the `Resource` table.
+
+```tsx
+// See: delivery-platform/lib/types/dispatch-engine/planner.ts
+export type LegacyRobot = {
+  serial: string;
+  status: RobotStatus;
+  battery: number;
+  lastSynced: Date;
+  healthy: boolean;
+  deployed: ParkingLotLocation | MroLocation | PodLocation | null;
   location: Location | null;
-  battery: number | null;
-  healthy: boolean | null;
+  futureDemand: (PendingDemand | ScheduledDemand)[];
+  activeDemand: PendingDemand | ActiveDemand | null;
   needsMovement: boolean | null;
   hasFood: boolean | null;
   tripType: TripType | null;
@@ -146,433 +469,175 @@ The `IotStreamerService` processes events and publishes to RabbitMQ:
   operationState: RobotStateEventState | null;
   attemptCancellationReason: AttemptCancellationReason | null;
   undergoingMaintenance: boolean | null;
-  timestamp: number;
-  status: SupplyStatus;
-}
+};
+
 ```
 
-### Fleet Service Models (Go)
-```go
-type FleetRobot struct {
-    Serial string
-    Healthy bool
-    OperationalState foundation.RobotOperationState
-    LocationType LocationType
-    Latitude float64
-    Longitude float64
-    ErrHorz float64
-    Velocity float64
-    HasFood *bool
-    NeedsMaintenance *bool
-}
+([`LegacyRobot` source](https://github.com/cocorobotics/delivery-platform/blob/main/lib/types/dispatch-engine/planner.ts))
+
+---
+
+## Phase 3: Consumption & Access
+
+Finally, services and applications read this data to perform their functions.
+
+### Dispatch Engine (Event-Driven Read)
+
+**Planning Read Path**:
+
+```mermaid
+sequenceDiagram
+    participant Planner as Dispatch Planner
+    participant Repo as SupplyRepo
+    participant Cache as In-Memory Cache
+    participant DB as Dispatch DB
+
+    Planner->>Repo: getAll(ResourceType.Robot)
+    Repo->>Cache: GET cache key
+    alt Cache Miss
+        Repo->>DB: SELECT data FROM "Resource"
+        DB-->>Repo: List of Robots
+        Repo->>Cache: SET cache key
+    else Cache Hit
+        Cache-->>Repo: Cached List of Robots
+    end
+    Repo-->>Planner: List of Robots
+    Planner->>Planner: Calculate Assignments
+
 ```
 
-## Key Concerns Identified
+The diagram above illustrates the **cache-aside** pattern used by the `Dispatch Engine` for high-performance reads. The flow is as follows:
 
-### 1. Multiple Sources of Truth
-- **State Service**: Stores state transitions in `stateHistory`
-- **Operations Service**: Stores business state in `RobotStateHistory` + ephemeral cache
-- **Dispatch Engine**: Stores robot state in `Resource` table (JSON) + `Robot` table
-- **Fleet Service**: Stores robot state in DynamoDB
-- **MDS Service**: Currently queries Operations service for status
+1. **Request**: The [`SupplyService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/supply/service/supply.service.ts) begins a planning cycle and needs the current state of all robots. It calls the [`getAll`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/supply/repo/supply.repo.ts#L334) method in the `SupplyRepo`.
+2. **Cache Check**: The `SupplyRepo` first checks its local **in-memory cache** to see if the requested robot data is already available. This cache is configured in the [`PlannerModule`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/planner/planner.module.ts) and is managed by the NestJS `CacheModule`.
+3. **Cache Hit**: If the data is in the cache (a "cache hit"), it is returned directly to the `SupplyService`, and the database is not queried.
+4. **Cache Miss**: If the data is not in the cache (a "cache miss"), the `SupplyRepo` proceeds to query the **Dispatch DB** (PostgreSQL) to get the authoritative state.
+5. **Cache Set**: Before returning the data to the service, the `SupplyRepo` writes the result into the cache. This ensures that the next request for this data will be a cache hit.
+6. **Return Data**: The `SupplyService` receives the list of robots and proceeds with its planning logic.
+- **Pattern**: **Event Sourcing with Cache-Aside**. The Dispatch Engine uses its `SupplyRepo` to read the list of available robots. This repository implements a cache-aside strategy: it first attempts to fetch the data from an **in-memory cache**. If the cache is empty, it queries the PostgreSQL database, populates the cache with the result, and then returns the data. This provides high performance for frequent reads while ensuring data consistency through cache invalidation on writes.
+- **Critical Usage**: The planning logic, found in the [`SupplyService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/supply/service/supply.service.ts), calls `repo.getAll()`, which abstracts away the caching logic. It runs a series of `usabilityChecks` on the returned data to filter for robots that are online, healthy, and available.
 
-### 2. Data Freshness Issues
-- **State Service**: Processes events in real-time but stores in DB
-- **Operations Service**: Uses Redis cache with TTL (ephemeral data)
-- **Dispatch Engine**: Updates on event receipt, but may have stale data if events are missed
-- **Fleet Service**: Processes Kafka messages (may have different latency than RabbitMQ)
+The event consumption logic is handled by subscribers like:
 
-### 3. Schema Inconsistencies
-- **Operation State**: Different enums across services:
-  - State Service: `'GROUNDED' | 'ON_TRIP' | 'PARKED' | 'OFF_DUTY'`
-  - Operations: `RobotStateEventState` enum (ON_TRIP, PARKED, GROUNDED, OFF_DUTY, DEPLOYED)
-  - Fleet: `foundation.RobotOperationState` (Go enum)
-- **Location**: Different structures:
-  - State: `{ latitude, longitude, heading, errHorz, updatedAt }`
-  - Operations: `{ lat, lng, timestamp }`
-  - Dispatch: `Location` type with `geo: { latitude, longitude }`
-- **Battery**: Different representations:
-  - State: `{ soc, isCharging, sn? }`
-  - Operations: `{ currentBatteryPercentage, timestamp }`
-  - Dispatch: `number | null` (just SOC)
+- [`IotHeartbeatHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/iot-heartbeat.handler.ts): Processes connectivity and telemetry updates.
+- [`RobotStageChangeHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts): Processes changes in the robot's fundamental state (e.g., `PARKED`, `ON_TRIP`).
 
-### 4. Event Processing Differences
-- **State Service**: Processes all events, aggregates health, publishes heartbeats
-- **Operations Service**: Processes heartbeats and state changes separately
-- **Dispatch Engine**: Only processes heartbeats and state changes, ignores other events
-- **Trip Monitor**: Only processes heartbeats for trip tracking
+### Mission Control & MDS (On-Demand Read)
 
-### 5. Missing or Incomplete Data
-- Some services may not receive all events (e.g., if RabbitMQ consumer fails)
-- Different services may process events at different times
-- Cache TTLs may cause stale data
-- Some services query different sources (e.g., Operations queries State service via RPC)
+**Data Fetch Path**:
 
-## Current API Endpoints
+```mermaid
+sequenceDiagram
+    participant User as Mission Control / MDS
+    participant O as Operations Service
+    participant PG as Ops DB (Postgres)
+    participant Redis as Ops Redis
+    participant S as State Service (RPC)
 
-### Operations Service
-- `GET /robots/:serial/state` - Returns `{ robotState }`
-- `GET /robots/:serial/status` - Returns robot status
-- `GET /internal/robots` - Returns list of robots with full state
-- `GET /robots/:serial/location` - Returns location data
+    User->>O: GET /robots/:id
+    O->>PG: Get Business State (e.g., maintenance flags)
+    PG-->>O: Business State
+    O->>Redis: Get Ephemeral Data (e.g., connectivity)
+    alt Cache Miss for Ephemeral Data
+        O->>S: RPC GetCurrentState (Fallback)
+        S-->>O: State Data
+        O->>Redis: SET cache
+    else Cache Hit
+        Redis-->>O: Ephemeral Data
+    end
+    O->>O: Aggregate all data
+    O-->>User: Response
 
-### State Service
-- `GET /state/:serial/current` - Returns current state from stateHistory
-- `GET /devices/state/latest` - Returns latest state for multiple devices
-- RPC endpoints for internal service communication
-
-### Device Service
-- `GET /devices/:serial` - Device details
-- `GET /devices` - List devices
-
-### MDS Service
-- `GET /v1/vehicles` - Vehicle inventory (currently queries Operations)
-- `GET /v1/vehicles/status` - Vehicle status (NOT IMPLEMENTED - returns 501)
-- `GET /v1/vehicles/:device_id` - Single vehicle
-- `GET /v1/trips` - Trip data (from Redshift)
-
-## MDS Requirements (from spec)
-
-### Vehicle States
-- `removed`, `available`, `non_operational`, `reserved`, `on_trip`, `stopped`, `non_contactable`, `missing`, `elsewhere`
-
-### Event Types
-- `comms_lost`, `comms_restored`, `trip_start`, `trip_end`, `trip_pause`, `trip_resume`, `order_pick_up`, `order_drop_off`, `reservation_start`, `reservation_stop`, `customer_cancellation`, `provider_cancellation`, `driver_cancellation`, `maintenance`, `maintenance_pick_up`, `maintenance_end`, `decommissioned`, `recommission`, `service_start`, `service_end`, `trip_enter_jurisdiction`, `trip_leave_jurisdiction`, `located`, `not_located`, `compliance_pick_up`
-
-### Required Fields
-- `device_id`, `provider_id`, `vehicle_state`, `last_event` (with `event_id`, `vehicle_state`, `timestamp`)
-
-## Usage Patterns
-
-### What Services Query Device State?
-
-1. **Dispatch Engine**: 
-   - Queries robot supply for planning
-   - Needs: location, battery, healthy, operationState, needsMovement, hasFood, tripType
-   - Frequency: Real-time during planning cycles
-
-2. **Operations Service**:
-   - Queries robot state for operational decisions
-   - Needs: All state fields, connectivity, health, location, battery
-   - Frequency: On-demand via API, cached for performance
-
-3. **Trip Monitor**:
-   - Queries robot state for trip tracking
-   - Needs: location, operationState
-   - Frequency: Real-time from heartbeats
-
-4. **MDS Service**:
-   - Queries robot state for city reporting
-   - Needs: vehicle_state, last_event, device_id, location
-   - Frequency: On-demand API requests from cities
-
-5. **Fleet Service**:
-   - Queries robot state for fleet management
-   - Needs: OperationalState, Healthy, Location, HasFood, NeedsMaintenance
-   - Frequency: Real-time from Kafka + RabbitMQ
-
-6. **Web Frontend (Mission Control)**:
-   - Queries robot state for UI display
-   - Needs: All state fields
-   - Frequency: Polling/real-time updates
-
-## Recommendations for Device API Schema
-
-Based on usage patterns, a unified Device API should support:
-
-### Core Device State
-- `device_id` (serial)
-- `location` - Standardized location object
-- `battery` - Standardized battery object
-- `healthy` - Boolean health status
-- `operation_state` - Unified operation state enum
-- `connectivity` - Connection status
-
-### Business State
-- `needs_movement` - Boolean
-- `has_food` - Boolean
-- `trip_type` - Enum
-- `needs_maintenance` - Boolean
-- `needs_pickup` - Boolean
-- `driveable` - Boolean
-- `undergoing_maintenance` - Boolean
-
-### MDS-Specific Fields
-- `vehicle_state` - MDS vehicle state enum
-- `last_event` - Most recent event with timestamp
-- `provider_id` - Provider identifier
-
-### Metadata
-- `last_updated` - Timestamp of last update
-- `data_freshness` - Age of data
-- `source` - Where the data came from
-
-## Deep Dive Findings
-
-### 1. State Determination Logic
-
-#### Operations Service State Determination
-The Operations service determines robot state through a combination of sources:
-
-**Operational Readiness Check** (`getRobotOperationalReadinessIssue`):
-1. **Connectivity Check**: Queries `robotEphemeralDataService.isConnected(serial)` - checks Redis set
-2. **Trip Status**: Checks if robot is on trip via `robotEphemeralDataService.robotIsOnTrip(serial)`
-3. **Ephemeral State**: Gets `robotEphemeralState` from cache (TTL: `ROBOT_EPHEMERAL_STATE_TTL_IN_SECONDS`)
-   - Falls back to querying State Service via RPC if cache miss
-   - Checks `robotState` field (GROUNDED, ON_TRIP, PARKED, etc.)
-4. **Health Status**: Gets `ephemeralHealthInfo` from cache
-5. **State History**: Queries `RobotStateHistory` table for latest record
-   - Checks `undergoingMaintenance` and `needsMaintenance` flags
-
-**State Sources Priority**:
-- Ephemeral cache (Redis) - fastest, may be stale
-- State Service RPC - fallback if cache miss
-- State History DB - for business logic flags (maintenance, etc.)
-
-**Key State Fields**:
-- `operationState`: ON_TRIP | PARKED | GROUNDED | OFF_DUTY | DEPLOYED
-- `robotState`: GROUNDED | ON_TRIP | PARKED | etc. (from State Service)
-- `needsMaintenance`: boolean
-- `undergoingMaintenance`: boolean
-- `hasFood`: boolean
-- `needsMovement`: boolean
-- `driveable`: boolean
-
-#### State Service State Machine
-The State Service maintains a state machine with these transitions:
-- **States**: OFF_DUTY, PARKED, ON_TRIP, GROUNDED
-- **Transitions**: 
-  - HARD_RESET → OFF_DUTY (from any state)
-  - DEPLOY_FO_APP → PARKED (from OFF_DUTY)
-  - UNDEPLOY_FO_APP → OFF_DUTY (from PARKED)
-  - TRIP_ASSIGNED → ON_TRIP (from OFF_DUTY or PARKED)
-  - TRIP_COMPLETED → PARKED (from ON_TRIP)
-  - CRITICAL_ERROR_DETECTED → GROUNDED (from ON_TRIP, PARKED, or OFF_DUTY)
-  - RECOVERING → OFF_DUTY (from GROUNDED)
-
-### 2. Dispatch Engine Usage Patterns
-
-#### Robot Filtering for Planning
-Dispatch Engine uses `SupplyService.getRobotUnusableReasons()` to filter robots:
-
-**Usability Checks** (varies by demand type):
-- **Always Required**:
-  - `Online`: Robot must have synced within last 1 minute (`lastSynced` check)
-  - `HasLocation`: Robot must have a location
-  - `Deployed`: Robot must have a deployment location
-- **For Pickup/Delivery**:
-  - `Healthy`: Robot must be healthy
-  - `DeployedToParkingLot`: Robot must be deployed to a parking lot
-  - `NotNeedsMaintenance`: Robot must not need maintenance
-- **For Deployment**:
-  - `Healthy`: Robot must be healthy
-
-#### Planning Logic
-The planner filters robots by:
-1. **Distance**: Filters robots within `maxSearchDistanceMiles` of origin
-2. **Usability**: Applies `getRobotUnusableReasons()` checks
-3. **Scheduled Demands**: 
-   - Rejects robots with scheduled delivery
-   - Rejects robots with scheduled pickup (unless P2P enabled)
-   - Considers scheduled movement (may act as pickup if destination matches)
-4. **Active Demands**: 
-   - Uses active demand completion time as robot position time
-   - May use active demand as existing pickup if destination matches origin
-
-**Critical Robot Fields for Planning**:
-- `location`: Current location (used for distance calculations)
-- `deployed`: Deployment location (used for filtering and position tracking)
-- `healthy`: Health status (required for delivery/pickup)
-- `needsMaintenance`: Maintenance flag (blocks delivery/pickup)
-- `lastSynced`: Last sync time (must be < 1 minute for "online")
-- `activeDemand`: Current active demand (affects position/time)
-- `scheduledDemands`: Future demands (pickup, delivery, movement)
-- `operationState`: Operational state (affects usability)
-- `battery`: Battery level (stored but not actively filtered)
-
-**Data Freshness Requirements**:
-- `lastSynced` must be within 1 minute for robot to be considered "online"
-- Location data should be recent (heartbeats come every ~10 seconds)
-- State changes should propagate quickly for planning accuracy
-
-### 3. MDS Mapping Requirements
-
-#### Current MDS Implementation
-The MDS service currently:
-- Queries Operations service `/internal/robots` endpoint
-- Maps `RobotState.OperationState` to MDS `vehicle_state`
-- Uses `GetDeviceIDForVehicle()` to generate stable device IDs
-
-#### State Mapping (`normalizeVehicleState` function):
-```go
-// Internal State → MDS Vehicle State
-"PARKED" or "AVAILABLE" → "available"
-"EN_ROUTE" or "TRIP" or "IN_DELIVERY" → "trip"
-"MAINTENANCE" or "UNDER_MAINTENANCE" → "maintenance"
-// All others → lowercase of input
 ```
 
-#### Required MDS Fields
-- `device_id`: Stable device identifier (from `GetDeviceIDForVehicle`)
-- `provider_id`: Provider identifier
-- `vehicle_state`: One of: `removed`, `available`, `non_operational`, `reserved`, `on_trip`, `stopped`, `non_contactable`, `missing`, `elsewhere`
-- `last_event`: Object with:
-  - `event_id`: Unique event identifier
-  - `vehicle_state`: Current vehicle state
-  - `timestamp`: Event timestamp (milliseconds)
+- **Pattern**: **Aggregated Query**. Both Mission Control and the MDS Service act as clients that make on-demand HTTP requests to the `Operations Service`. The `Operations Service` serves as a facade, aggregating data from multiple sources to provide a comprehensive, real-time view of a robot's state.
+- **Mission Control**: The frontend client, defined in [`device.api.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/web/mission-control/src/api/device.api.ts), calls endpoints on the `Operations Service` to fetch robot details for monitoring and debugging.
+- **MDS Service**: This Go-based service, defined in [`mds_handler.go`](https://github.com/cocorobotics/coco-services/blob/master/mds/internal/handlers/mds_handler.go), is responsible for compliance with city data standards. It calls the `Operations Service` to get the internal robot state and then transforms it into the required MDS format using helpers like [`normalizeVehicleState`](https://github.com/cocorobotics/coco-services/blob/master/mds/internal/handlers/transform/vehicle_status.go).
 
-#### MDS Event Types Needed
-Based on the MDS spec, the following event types are relevant:
-- `trip_start`, `trip_end`, `trip_pause`, `trip_resume`
-- `order_pick_up`, `order_drop_off`
-- `reservation_start`, `reservation_stop`
-- `customer_cancellation`, `provider_cancellation`
-- `maintenance`, `maintenance_pick_up`, `maintenance_end`
-- `service_start`, `service_end`
-- `comms_lost`, `comms_restored`
-- `trip_enter_jurisdiction`, `trip_leave_jurisdiction`
+The `Operations Service`'s core aggregation logic resides within the [`RobotsService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robots.service.ts). When a request comes in, it:
 
-**Current Gap**: MDS `/v1/vehicles/status` endpoint is NOT IMPLEMENTED (returns 501)
+1. Fetches the latest business state (maintenance status, etc.) from its own **PostgreSQL** database.
+2. Retrieves ephemeral data (connectivity, real-time health) from a **Redis** cache, managed by [`RobotEphemeralDataService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robot-ephemeral-data.service.ts).
+3. **If the cache is empty (a "cache miss"), it makes a fallback synchronous RPC call to the `State Service`** to get the most recent raw state. This is handled by the [`StateServiceRpc`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/core/rpc/state-service.rpc.ts) client. This ensures data is always available, even if the cache is cold.
+4. Finally, it aggregates these different data sources into a single, unified response for the client.
 
-### 4. Event Processing Timing
+### Fleet Service (On-Demand Read)
 
-#### Event Flow Timeline
-1. **Robot sends heartbeat** → AWS IoT (MQTT)
-2. **IoT Bridge** → SQS queue (`stateQueueUrl`)
-3. **State Service (`IotStreamerService`)** processes message:
-   - Parses heartbeat data
-   - Aggregates health status (checks DriveU status from DynamoDB)
-   - Detects battery swaps
-   - Saves to `heartbeat` table via `HeartbeatService`
-   - Publishes to RabbitMQ `IoT.Heartbeat` exchange
-4. **Multiple consumers** receive heartbeat:
-   - **Operations Service**: Updates ephemeral cache, saves heartbeat to DB
-   - **Dispatch Engine**: Updates robot supply in `Resource` table
-   - **Trip Monitor**: Updates trip state
-   - **Fleet Service**: Updates DynamoDB (separate Kafka consumer)
+**Fleet Service Data Fetch Path**:
 
-#### Timing Characteristics
-- **Heartbeat frequency**: ~10 seconds
-- **SQS processing**: Batch size 10, timeout 30s
-- **RabbitMQ**: Near-instant propagation
-- **Cache TTLs**: 
-  - Ephemeral state: `ROBOT_EPHEMERAL_STATE_TTL_IN_SECONDS` (unknown, likely 60-300s)
-  - Ephemeral health: Similar TTL
-- **Database writes**: Synchronous, may have replication lag
+```mermaid
+sequenceDiagram
+    participant Consumer as Internal Service
+    participant Fleet as Fleet Service (gRPC)
+    participant Redis as Fleet Redis Cache
+    participant Dynamo as Fleet DynamoDB
 
-#### Potential Race Conditions
-1. **State updates vs. heartbeats**: State changes may arrive before/after heartbeats
-2. **Multiple consumers**: Different services may see different states if processing at different times
-3. **Cache invalidation**: Cache may be stale if events are missed
-4. **Database replication**: Read replicas may lag behind primary
+    alt Get Real-time Telemetry (Labor Scope)
+        Consumer->>Fleet: FleetLaborProviderScope.Get(serial)
+        Note right of Consumer: "What is robot 123's exact location and battery right now?"
+        Fleet->>Redis: GET robot.heartbeat.cache.<serial>
+        Redis-->>Fleet: Cached RobotState
+        Fleet-->>Consumer: Response
+    end
 
-### 5. API Query Patterns
+    alt Get Provider Mapping (Beacon Scope)
+        Consumer->>Fleet: FleetBeaconScope.GetVirtualRobot(externalId)
+        Note right of Consumer: "Which of our robots is Uber's vehicle 'xyz-789'?"
+        Fleet->>Dynamo: Query for robot by externalId
+        Dynamo-->>Fleet: FleetRobot item
+        Fleet-->>Consumer: Response
+    end
 
-#### Current Usage Patterns
+```
 
-**Single Device Queries**:
-- Operations: `GET /robots/:serial/state`, `GET /robots/:serial/status`
-- State: `GET /state/:serial/current`
-- Device: `GET /devices/:serial`
-- MDS: `GET /v1/vehicles/:device_id`
+- **Pattern**: **RPC/On-Demand Query**. While some services subscribe to events, others query the Fleet Service's gRPC API directly to get real-time state or mapping information. This pattern is used when a service needs immediate, specific information about a robot without maintaining its own local copy of the fleet's state.
+- **Consumers & Use Cases**: The consumers are typically other backend services responsible for integrations or provider-specific logic.
+    - **Provider Integrations (e.g., Uber)**: When an event comes from an external provider that references their own vehicle ID, a service calls the `FleetBeaconScopeService` to translate that ID into an internal robot serial number.
+    - **Real-time State Checks**: A service might need the most up-to-date location or status of a specific robot before performing an action. It would call the `FleetLaborProviderScopeService` to get this low-latency data from the Redis cache.
 
-**Bulk Queries**:
-- Operations: `GET /internal/robots` (returns all robots)
-- Dispatch Engine: `getAll(ResourceType.Robot)` - queries all robots for planning
-- State: `GET /devices/state/latest` (with serials param)
-- MDS: `GET /v1/vehicles` (returns all vehicles for city)
+### Integrations Service (Event-Driven Push)
+**DoorDash Status Push Path**:
+```mermaid
+sequenceDiagram
+    participant RMQ as RabbitMQ
+    participant Handler as DeliveryUpdateHandlers
+    participant Router as DeliveryUpdateService
+    participant DD as DoorDashUpdateServiceV3
+    participant Client as DoorDashClientServiceV3
+    participant DoorDash as DoorDash API
 
-**Filtered Queries**:
-- Operations: `findBots(criteria)` - filters by:
-  - `isOnTrip`: boolean
-  - `isOnTask`: boolean
-  - `isHealthy`: boolean
-  - `isConnectivityHealthy`: boolean
-  - `isGrounded`: boolean
-  - `range`: geographic radius
-- Dispatch Engine: Filters robots by distance, usability checks, scheduled demands
+    RMQ->>Handler: Consume DeliveryEvent (e.g., StatusUpdate)
+    Handler->>Router: updateDeliveryStatus(payload)
+    Router->>Router: if (provider === 'DoorDash')
+    Router->>DD: updateDeliveryStatus(payload)
+    DD->>DD: Map internal status to DoorDash status
+    DD->>Client: updateVehicleStatus(request)
+    Client->>DoorDash: POST /v3/vehicles/status
+    DoorDash-->>Client: 200 OK
+```
 
-**Real-time Requirements**:
-- Dispatch Engine: Needs fresh data for planning (checks `lastSynced < 1 minute`)
-- Operations: Uses cache for performance but needs accurate state
-- Mission Control UI: Polls for updates, needs recent data
-- MDS: External API, needs rate limiting/DDoS protection
+-   **Pattern**: **Event-Driven Push**. The `Integrations Service` listens for internal business events and acts as a facade that pushes state updates to external partners in the format they require. This decouples our internal domain from the specific API requirements of each partner.
+-   **Consumers & Use Cases**: This flow is used to keep external partners like DoorDash synchronized with the state of a delivery that is being dispatched through their platform.
 
-#### Data Freshness Expectations
-- **Dispatch Engine**: `lastSynced` must be < 1 minute
-- **Operations**: Cache TTL likely 60-300 seconds, but queries State Service RPC on cache miss
-- **State Service**: Real-time processing, stores in DB immediately
-- **Fleet Service**: Processes Kafka messages (may have different latency)
+The process is as follows:
+1.  **Event Consumption**: The [`DeliveryUpdateHandlers`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/delivery-updates/delivery-update.handlers.ts) subscribe to various event types from the `Deliveries.DeliveryEvent` RabbitMQ exchange.
+2.  **Routing**: The handler calls the [`DeliveryUpdateService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/delivery-updates/delivery-update.service.ts), which inspects the event payload to identify the provider (e.g., `DoorDash`). It then routes the event to the appropriate provider-specific service.
+3.  **Transformation**: The [`DoorDashUpdateServiceV3`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/doordash/v3/doordash-update.service.ts) contains the core business logic for the DoorDash integration. It transforms our internal delivery status into the specific status that the DoorDash API expects (e.g., `HEADING_TO_DROPOFF_LOCATION`).
+4.  **API Call**: Finally, it uses the [`DoorDashClientServiceV3`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/doordash/v3/doordash-client.service.ts) to make an outbound `POST` request to the DoorDash API to update the vehicle's status.
 
-## Recommendations for Device API Schema
+While the payload is delivery-centric, it includes the robot's real-time location, making it a relevant consumer of device data.
 
-Based on usage patterns, a unified Device API should support:
-
-### Core Device State
-- `device_id` (serial)
-- `location` - Standardized location object with timestamp
-- `battery` - Standardized battery object with timestamp
-- `healthy` - Boolean health status
-- `operation_state` - Unified operation state enum
-- `connectivity` - Connection status (online/offline)
-- `last_synced` - Timestamp of last update
-
-### Business State
-- `needs_movement` - Boolean
-- `has_food` - Boolean
-- `trip_type` - Enum (DELIVERY, RETURN, DEPLOYMENT, PICKUP, NONE)
-- `needs_maintenance` - Boolean
-- `needs_pickup` - Boolean
-- `driveable` - Boolean
-- `undergoing_maintenance` - Boolean
-- `deployed_location` - Deployment location info
-
-### MDS-Specific Fields
-- `vehicle_state` - MDS vehicle state enum
-- `last_event` - Most recent event with timestamp and event_id
-- `provider_id` - Provider identifier
-
-### Metadata
-- `last_updated` - Timestamp of last update
-- `data_freshness` - Age of data (for monitoring)
-- `source` - Where the data came from (for debugging)
-
-### API Endpoints Needed
-
-**Single Device**:
-- `GET /devices/:device_id` - Full device state
-- `GET /devices/:device_id/state` - Current state only
-- `GET /devices/:device_id/status` - Status summary (for MDS compatibility)
-
-**Bulk Queries**:
-- `GET /devices` - List all devices (with filtering)
-- `POST /devices/batch` - Get multiple devices by IDs
-- `GET /devices/available` - Get available robots (for Dispatch Engine)
-
-**Filtering Support**:
-- Query params: `healthy`, `operation_state`, `deployed_location`, `geographic_bounds`, `last_synced_after`
-- Support pagination for large result sets
-
-**Real-time Updates**:
-- WebSocket support for Mission Control UI
-- Webhook support for state changes
-- Rate limiting for external consumers (MDS)
-
-## Next Steps
-
-1. **Schema design**:
-   - Design unified device state schema
-   - Map existing schemas to unified schema
-   - Design API request/response formats
-
-2. **Architecture design**:
-   - Determine where Device API service should live
-   - Design data aggregation strategy (single source of truth)
-   - Design caching strategy (maintain freshness requirements)
-   - Design event processing strategy (ensure consistency)
-
-3. **Migration plan**:
-   - Identify all current usages
-   - Plan migration path for each service
-   - Design backward compatibility layer
-
+**DoorDash API Schema (`VehicleStatus`)**:
+```typescript
+// See: delivery-platform/service/integrations/src/doordash/v3/types/API.ts
+export type VehicleStatus = {
+  vehicle_location: Location;
+  elevation?: number;
+  vehicle_id: string;
+  delivery_status: ExternalDoorDashDeliveryStatusV3;
+  dropoff_location?: Location;
+  delivery_failure: FailureReason | null;
+  eta_to_dropoff: number;
+  eta_to_pickup_location?: number;
+};
+```
