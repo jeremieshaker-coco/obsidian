@@ -153,6 +153,43 @@ interface IWebhookEvent {
 
 ([`IWebhookEvent` source](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/drive-u/interfaces/webhook-event.interface.ts))
 
+### Outbound DriveU API Calls (DLC)
+
+In addition to receiving webhooks, our system also makes outbound API calls to DriveU's **DLC (DriveU Live Control)** API to manage the lifecycle of video streaming pipelines for teleoperation. This API is the primary interface for programmatically starting, stopping, and assigning video sessions.
+
+**DLC API Call Flow**:
+```mermaid
+sequenceDiagram
+    participant MC as Mission Control UI
+    participant Service as Legacy Device Service
+    participant Client as DLCClient
+    participant DriveU as DriveU DLC API
+
+    MC->>Service: User clicks "Start Stream"
+    Service->>Client: createPipeline(vin)
+    Client->>DriveU: POST /videopipeline/:vin
+    DriveU-->>Client: { pipeline_state: 'CREATING' }
+    Client->>Client: Polls describePipeline(vin)
+    Client->>DriveU: GET /videopipeline/:vin
+    DriveU-->>Client: { pipeline_state: 'READY' }
+    Client-->>Service: Pipeline Ready
+    Service-->>MC: 200 OK
+```
+
+This flow is orchestrated by a few key components:
+1.  **Request Initiation (Mission Control)**: The process begins when a user in Mission Control needs to teleoperate a robot. They click a button (e.g., "Start Stream"), which triggers an API call to the backend. This request is handled by a controller in the **Legacy Device Service**, specifically a method within [`drive-u.controller.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/device/src/device/drive-u/drive-u.controller.ts).
+
+2.  **Service Layer Logic**: The controller delegates the request to the [`DriveUService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/device/src/device/drive-u/drive-u.service.ts). This service contains the business logic to determine *if* and *how* a video pipeline should be created for a given robot.
+
+3.  **Client Abstraction (`DLCClient`)**: The `DriveUService` does not make HTTP requests directly. Instead, it uses the shared [`DLCClient`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/drive-u/dlc-client.service.ts). This client encapsulates all direct communication with the external DriveU DLC API, providing methods for the most common operations:
+    *   [`createPipeline`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/drive-u/dlc-client.service.ts#L101): Sends a `POST` request to the DriveU API to start the process of creating a new video stream for a specific robot (`vin`).
+    *   [`assignPipeline`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/drive-u/dlc-client.service.ts#L125): Assigns an available human pilot to an active stream.
+    *   [`releasePipeline`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/drive-u/dlc-client.service.ts#L143): Terminates the video stream.
+
+4.  **Polling for Readiness**: After calling `createPipeline`, the DriveU API returns a `CREATING` status. The `DLCClient` then repeatedly calls the [`describePipeline`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/drive-u/dlc-client.service.ts#L86) method, which sends a `GET` request to poll the pipeline's status. Once the status changes to `READY`, the client's work is done.
+
+5.  **Final Response**: The `DLCClient` returns a success response to the `DriveUService`, which in turn responds to the initial request from Mission Control, allowing the UI to connect the pilot to the now-ready video stream.
+
 ### Physical Robots (MQTT to Kafka Bridge)
 
 While the `State Service` consumes MQTT messages for its own processing, there is a parallel path that forwards raw telemetry directly to Kafka for the `Fleet Service`. This is handled by a dedicated bridge service.
@@ -347,33 +384,36 @@ model RobotStateHistory {
 **Processing Flow**:
 
 ```mermaid
-graph LR
-    subgraph Inputs
-        K[Kafka: robot_platform_robot_updates_v1]
-        R[RabbitMQ: Operations Events]
+sequenceDiagram
+    participant Kafka
+    participant RabbitMQ
+    box Fleet Service
+        participant RC as robot_consumer
+        participant LRC as legacy_robots_consumer
     end
+    participant Redis
+    participant DynamoDB
 
-    subgraph Fleet Service
-        RC[robot_consumer]
-        LRC[legacy_robots_consumer]
-        DB[(DynamoDB: fleet-robots)]
-        Redis[(Redis Cache)]
+    par Telemetry Path (High-Frequency)
+        Kafka->>RC: Consumes telemetry message
+        RC->>Redis: Writes foundation.RobotState to cache
+        RC->>DynamoDB: Updates Telemetry fields (Location, Battery)
+    and Business State Path (Low-Frequency)
+        RabbitMQ->>LRC: Consumes business event
+        LRC->>DynamoDB: Updates Business fields (HasFood, OperationalState)
     end
-
-    K --> RC
-    R --> LRC
-    RC -->|Enrich & Cache| Redis
-    RC -->|Update Telemetry| DB
-    LRC -->|Update Business State| DB
-
 ```
 
 This diagram shows the dual-ingestion model of the Fleet Service, which separates high-frequency telemetry from lower-frequency business state updates.
 
-1. **Telemetry Path (High-Frequency)**: Raw telemetry (location, battery, etc.) is consumed from the `robot_platform_robot_updates_v1` Kafka topic by the [`robot_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/robot_consumer.go). This consumer writes the data to a Redis cache for fast, low-latency access and also persists it to the `fleet-robots` DynamoDB table.
-2. **Business State Path (Low-Frequency)**: Slower-moving business state changes (e.g., `hasFood`, `needsMaintenance`) are consumed from a RabbitMQ exchange (populated by the Operations Service) by the [`legacy_robots_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/consumer.go). This consumer updates the corresponding fields on the existing robot item in the `fleet-robots` DynamoDB table.
+1.  **Telemetry Path (Kafka & Redis - The "Hot Path")**:
+    *   The [`robot_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/robot_consumer.go) subscribes to high-volume telemetry from the `robot_platform_robot_updates_v1` Kafka topic.
+    *   **Enrichment & Caching**: For each message, the consumer transforms the raw data into a [`foundation.RobotState`](https://github.com/cocorobotics/coco-services/blob/master/core/foundation/robot.go) struct. This involves parsing fields like location, battery, and component health. This standardized `RobotState` object is then written to a **Redis cache** with a short TTL. This provides the low-latency data needed by the `FleetLaborProviderScopeService` gRPC endpoint for real-time queries.
+    *   **Telemetry Persistence**: The consumer also updates the corresponding [`FleetRobot`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/entities/fleet_robot.go) item in the `fleet-robots` **DynamoDB** table. It specifically updates the telemetry-related fields, such as `Latitude`, `Longitude`, `BatteryPercent`, and `Healthy`.
 
-This hybrid approach allows the service to handle high-volume telemetry efficiently via Kafka while still reacting to important business events propagated through RabbitMQ.
+2.  **Business State Path (RabbitMQ - The "Warm Path")**:
+    *   The [`legacy_robots_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/consumer.go) subscribes to lower-frequency business state events from a RabbitMQ exchange, which are published by the `Operations Service`.
+    *   **Business State Persistence**: This consumer's sole job is to update the business-related fields on the `FleetRobot` item in **DynamoDB**. It receives events that contain information not available in raw telemetry, such as `HasFood`, `NeedsMaintenance`, and the overall `OperationalState` (e.g., `ON_TRIP`, `PARKED`). This ensures that the canonical record in DynamoDB reflects both the robot's physical state and its current business context.
 
 ### Redis Cache Schema
 
@@ -591,81 +631,209 @@ The `Operations Service`'s core aggregation logic resides within the [`RobotsSer
 
 ### Fleet Service (On-Demand Read)
 
-**Fleet Service Data Fetch Path**:
+While some services subscribe to events, others query the Fleet Service's gRPC API directly to get real-time state or mapping information. This pattern is used when a service needs immediate, specific information about a robot without maintaining its own local copy of the fleet's state. The two primary use cases are real-time telemetry for dispatching and ID resolution for provider integrations.
 
+#### Use Case 1: Real-time Telemetry for Dispatching
+
+The Dispatch Engine needs the most up-to-date, low-latency state of all robots to make efficient planning decisions. It achieves this by querying the `FleetLaborProviderScope`, which reads directly from the Redis cache.
+
+**Dispatch Engine -> Fleet Service (Labor Scope)**:
 ```mermaid
 sequenceDiagram
-    participant Consumer as Internal Service
+    participant Controller as DemandController
+    participant Planner as PlannerService
+    participant Supply as SupplyService
     participant Fleet as Fleet Service (gRPC)
     participant Redis as Fleet Redis Cache
-    participant Dynamo as Fleet DynamoDB
 
-    alt Get Real-time Telemetry (Labor Scope)
-        Consumer->>Fleet: FleetLaborProviderScope.Get(serial)
-        Note right of Consumer: "What is robot 123's exact location and battery right now?"
-        Fleet->>Redis: GET robot.heartbeat.cache.<serial>
-        Redis-->>Fleet: Cached RobotState
-        Fleet-->>Consumer: Response
-    end
-
-    alt Get Provider Mapping (Beacon Scope)
-        Consumer->>Fleet: FleetBeaconScope.GetVirtualRobot(externalId)
-        Note right of Consumer: "Which of our robots is Uber's vehicle 'xyz-789'?"
-        Fleet->>Dynamo: Query for robot by externalId
-        Dynamo-->>Fleet: FleetRobot item
-        Fleet-->>Consumer: Response
-    end
-
+    Controller->>Planner: quote(dto)
+    Planner->>Supply: getAll(ResourceType.Robot)
+    Supply->>Fleet: FleetLaborProviderScope.Get(serial)
+    Fleet->>Redis: GET robot.heartbeat.cache.<serial>
+    Redis-->>Fleet: Cached foundation.RobotState
+    Fleet-->>Supply: Response
+    Supply-->>Planner: List of Robots
+    Planner-->>Controller: Planning Result
 ```
 
-- **Pattern**: **RPC/On-Demand Query**. While some services subscribe to events, others query the Fleet Service's gRPC API directly to get real-time state or mapping information. This pattern is used when a service needs immediate, specific information about a robot without maintaining its own local copy of the fleet's state.
-- **Consumers & Use Cases**: The consumers are typically other backend services responsible for integrations or provider-specific logic.
-    - **Provider Integrations (e.g., Uber)**: When an event comes from an external provider that references their own vehicle ID, a service calls the `FleetBeaconScopeService` to translate that ID into an internal robot serial number.
-    - **Real-time State Checks**: A service might need the most up-to-date location or status of a specific robot before performing an action. It would call the `FleetLaborProviderScopeService` to get this low-latency data from the Redis cache.
+Here is the step-by-step flow:
+1.  **HTTP Request**: An API call is made to the `Dispatch Engine`'s `POST /quote` endpoint to request a new delivery plan.
+2.  **Controller**: The request is handled by the [`quote` method](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/planner/controllers/demand.controller.ts#L233) in the `DemandController`.
+3.  **Planner Service**: The controller calls the [`create` method](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/planner/service/planner.service.ts#L187) on the `PlannerService`.
+4.  **Supply Service**: To find a suitable robot, the `PlannerService` needs a list of all available robots. It calls the [`getRobots` method](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/supply/service/supply.service.ts#L104) on the `SupplyService`.
+5.  **Fleet Client Call**: The `SupplyService` uses a client wrapper to make a `FleetLaborProviderScope.Get` gRPC call to the `Fleet Service`. This call is designed for high performance, fetching the [`foundation.RobotState`](https://github.com/cocorobotics/coco-services/blob/master/core/foundation/robot.go) object directly from the **Redis cache**.
 
-### Integrations Service (Event-Driven Push)
-**DoorDash Status Push Path**:
+#### Use Case 2: ID Resolution for Provider Integrations
+
+This flow is used by provider integrations (like Uber) to resolve an internal robot serial number into a provider-specific vehicle ID. This is necessary because external partners track our robots using their own identifiers.
+
+**Uber Webhook -> Fleet Service (Beacon Scope)**:
 ```mermaid
 sequenceDiagram
-    participant RMQ as RabbitMQ
-    participant Handler as DeliveryUpdateHandlers
-    participant Router as DeliveryUpdateService
-    participant DD as DoorDashUpdateServiceV3
-    participant Client as DoorDashClientServiceV3
-    participant DoorDash as DoorDash API
+    participant Uber as Uber Webhook
+    participant Controller as UberController
+    participant Service as UberService
+    participant Fleet as Fleet Service (gRPC)
+    participant DynamoDB as Fleet DynamoDB
 
-    RMQ->>Handler: Consume DeliveryEvent (e.g., StatusUpdate)
-    Handler->>Router: updateDeliveryStatus(payload)
-    Router->>Router: if (provider === 'DoorDash')
-    Router->>DD: updateDeliveryStatus(payload)
-    DD->>DD: Map internal status to DoorDash status
-    DD->>Client: updateVehicleStatus(request)
-    Client->>DoorDash: POST /v3/vehicles/status
-    DoorDash-->>Client: 200 OK
+    Uber->>Controller: POST /uber/v1/webhook
+    Controller->>Service: handleWebhook(body)
+    Service->>Fleet: FleetBeaconScope.GetVehicleBySerial(serial)
+    Fleet->>DynamoDB: GET fleet-robots table
+    DynamoDB-->>Fleet: entities.FleetRobot
+    Fleet-->>Service: Response (with ProviderVehicleID)
+    Service-->>Controller: Result
+    Controller-->>Uber: 200 OK
 ```
 
--   **Pattern**: **Event-Driven Push**. The `Integrations Service` listens for internal business events and acts as a facade that pushes state updates to external partners in the format they require. This decouples our internal domain from the specific API requirements of each partner.
--   **Consumers & Use Cases**: This flow is used to keep external partners like DoorDash synchronized with the state of a delivery that is being dispatched through their platform.
+Here is the step-by-step flow:
+1.  **HTTP Webhook**: Uber sends a webhook to our backend when a delivery event occurs.
+2.  **Controller**: The request is received by the `Integrations Service` at the `POST /uber/v1/webhook` endpoint, which is handled by the [`HandleUberWebhook` method](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/uber/uber.controller.ts) in the `UberController`.
+3.  **Service Logic**: The controller calls the [`handleWebhook` method](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/uber/uber.service.ts) in the `UberService`.
+4.  **gRPC Call**: Inside the `UberService`, a gRPC client calls the [`GetVehicleBySerial` method](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/handlers/grpc/grpc_beacon_scope.go) on the `FleetBeaconScopeService` in the `Fleet Service`, passing the robot's serial number.
+5.  **Database Query**: The `Fleet Service` queries the `fleet-robots` DynamoDB table to find the corresponding `entities.FleetRobot` record.
+6.  **ID Resolution**: The `ProviderVehicleID` (the Uber-specific ID) is extracted from the record and returned to the `Integrations Service`.
+7.  **Business Logic**: The `Integrations Service` can now proceed with its business logic, having resolved the correct vehicle ID.
 
-The process is as follows:
-1.  **Event Consumption**: The [`DeliveryUpdateHandlers`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/delivery-updates/delivery-update.handlers.ts) subscribe to various event types from the `Deliveries.DeliveryEvent` RabbitMQ exchange.
-2.  **Routing**: The handler calls the [`DeliveryUpdateService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/delivery-updates/delivery-update.service.ts), which inspects the event payload to identify the provider (e.g., `DoorDash`). It then routes the event to the appropriate provider-specific service.
-3.  **Transformation**: The [`DoorDashUpdateServiceV3`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/doordash/v3/doordash-update.service.ts) contains the core business logic for the DoorDash integration. It transforms our internal delivery status into the specific status that the DoorDash API expects (e.g., `HEADING_TO_DROPOFF_LOCATION`).
-4.  **API Call**: Finally, it uses the [`DoorDashClientServiceV3`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/doordash/v3/doordash-client.service.ts) to make an outbound `POST` request to the DoorDash API to update the vehicle's status.
+### Integrations Service (Event-Driven Push)
 
-While the payload is delivery-centric, it includes the robot's real-time location, making it a relevant consumer of device data.
+This flow is used to keep external partners like DoorDash synchronized with the state of a delivery. The crucial insight is that the process is initiated by a low-level robot heartbeat, which is then translated into a high-level business event by the `Operations Service` before being consumed by the `Integrations Service`.
 
-**DoorDash API Schema (`VehicleStatus`)**:
-```typescript
-// See: delivery-platform/service/integrations/src/doordash/v3/types/API.ts
-export type VehicleStatus = {
-  vehicle_location: Location;
-  elevation?: number;
-  vehicle_id: string;
-  delivery_status: ExternalDoorDashDeliveryStatusV3;
-  dropoff_location?: Location;
-  delivery_failure: FailureReason | null;
-  eta_to_dropoff: number;
-  eta_to_pickup_location?: number;
-};
+**End-to-end DoorDash Status Push Path**:
+```mermaid
+sequenceDiagram
+    participant Robot as Physical Robot
+    participant StateSvc as State Service
+    participant RMQ as RabbitMQ
+    participant OpsSvc as Operations Service
+    participant OpsDB as Ops PostgreSQL
+    participant IntSvc as Integrations Service
+    participant DoorDash as DoorDash API
+
+    Robot->>StateSvc: Publishes MQTT Heartbeat (with location)
+    StateSvc->>RMQ: Publishes IoT.Heartbeat
+    RMQ->>OpsSvc: Consumes IoT.Heartbeat
+    OpsSvc->>OpsDB: Updates Trip status based on new location
+    OpsSvc->>RMQ: Publishes Deliveries.DeliveryEvent
+    RMQ->>IntSvc: Consumes Deliveries.DeliveryEvent
+    IntSvc->>DoorDash: POST /v3/updateVehicleStatus
+    DoorDash-->>IntSvc: 200 OK
+```
+
+This entire flow demonstrates how a change in a robot's physical state cascades through the system to trigger external notifications:
+
+1.  **Heartbeat Ingestion**: The `Physical Robot` sends its location via an MQTT heartbeat, which is processed by the `State Service` and published to RabbitMQ as an `IoT.Heartbeat` event.
+2.  **Trip State Update (Operations Service)**:
+    *   The [`Operations Service`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/handlers/iot-heartbeat-handler.ts) consumes the `IoT.Heartbeat` event.
+    *   It uses the new location data to update the status of the ongoing trip/delivery associated with that robot. This state change is persisted to the **Operations PostgreSQL database**.
+    *   After successfully updating its internal state, the `Operations Service` publishes a new, higher-level `Deliveries.DeliveryEvent` to RabbitMQ. This event signifies a meaningful change in the delivery's progress.
+3.  **External Push (Integrations Service)**:
+    *   The [`Integrations Service`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/doordash/v3/doordash-update.service.ts) listens for `Deliveries.DeliveryEvent`.
+    *   When an event is received, it transforms the internal delivery status into the format DoorDash expects, including the `vehicle_location`.
+    *   Finally, it makes an HTTP POST request to the DoorDash API to update the delivery status.
+
+**Schema (`VehicleStatus` sent to DoorDash)**:
+The payload sent to DoorDash is defined by the [`VehicleStatus` type](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/doordash/v3/types/API.ts). The key field that connects this flow back to the device's state is `vehicle_location`.
+
+### Unlock & Loading Flow (Pin-to-Unlock / Magic Lid)
+This flow describes how a user action (entering a pin, receiving an automated unlock command) translates into a physical lid opening and how that event propagates through the system to affect a delivery. It also covers the subsequent physical closing of the lid.
+
+**End-to-end Unlock Flow**:
+```mermaid
+sequenceDiagram
+    participant User as User (Merchant/Consumer)
+    participant Robot as On-Robot ROS
+    participant LidSvc as lid_service.py
+    participant EventReporter as event_reporter.py
+    participant MQTTBridge as mqtt_bridge
+    participant AWS as AWS IoT/SQS
+    participant StateSvc as State Service (IotStreamer)
+    participant StateDB as State PostgreSQL
+    participant RMQ as RabbitMQ
+    participant DeliverySvc as Deliveries Service (DevicelessHandler)
+    participant DeliveriesDB as Deliveries PostgreSQL
+
+    Note over Robot: 1. Lid Opened Flow (Command-driven)
+    Robot-->>LidSvc: Receives unlock command (_on_lid_request)
+    LidSvc->>LidSvc: Opens Lid
+    LidSvc-->>EventReporter: report_state(lid_open=True)
+    EventReporter-->>MQTTBridge: Publishes to /robot/events
+    MQTTBridge-->>AWS: Publishes to AWS IoT & SQS
+    AWS-->>StateSvc: Consumes SQS message
+    StateSvc->>StateDB: Creates LidCycle record (processRobotLidEvent)
+    StateSvc->>RMQ: Publishes LidCycle.Complete
+    RMQ->>DeliverySvc: Consumes event
+    DeliverySvc->>DeliveriesDB: Updates Delivery record state
+    
+    Note over Robot: 2. Lid Closed Flow (Manual Action)
+    User-->>Robot: Physically closes lid
+    Robot-->>LidSvc: Detects lid is closed
+    LidSvc-->>EventReporter: report_state(lid_open=False)
+    EventReporter-->>MQTTBridge: Publishes to /robot/events
+    MQTTBridge-->>AWS: Publishes to AWS IoT & SQS
+    AWS-->>StateSvc: Consumes SQS message
+    StateSvc->>StateDB: Updates LidCycle record
+```
+
+This flow is broken down into three main phases:
+
+1.  **On-Robot Processing**:
+    *   **Lid Opened (Command)**: An unlock command is sent to the robot, which is handled by the [`_on_lid_request` method](https://github.com/cocorobotics/coco-acu/blob/master/src/coco_business_logic/lid_operation/src/lid_operation/lid_service.py) in the `lid_service.py`. This service then publishes a `LID_OPENED` event via its [`report_state` method](https://github.com/cocorobotics/coco-acu/blob/master/src/coco_business_logic/lid_operation/src/lid_operation/lid_service.py).
+    *   **Lid Closed (Physical)**: A user physically closes the lid. The `lid_service.py` detects this change and publishes a `LID_CLOSED` event.
+    *   **Event Bridging**: The [`event_reporter.py`](https://github.com/cocorobotics/coco-acu/blob/master/src/monitoring/events/event_reporter/src/event_reporter/event_reporter.py) captures this event, validates it, and publishes it to a specific ROS topic that the [`mqtt_bridge`](https://github.com/cocorobotics/coco-acu/blob/master/src/mqtt_bridge/src/mqtt_bridge/bridge.py) is subscribed to. The bridge then forwards this event to AWS IoT.
+
+2.  **Backend Ingestion (`State Service`)**:
+    *   The `LID_OPENED`/`LID_CLOSED` event message lands in an SQS queue.
+    *   The [`IotStreamerService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/iot-streamer/iot-streamer.service.ts) in the `State Service` consumes the message.
+    *   It calls the [`processRobotLidEvent` method](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/lid-cycle/lid-cycle.service.ts) in the `LidCycleService`, which creates or updates a `LidCycle` record in the **State PostgreSQL database**.
+    *   Upon successful processing, it publishes a `LidCycle.Complete` event to RabbitMQ.
+
+3.  **Consumption in `Deliveries` Service**:
+    *   The `Deliveries` service consumes the `LidCycle.Complete` event in its [`deviceless.handler.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/deviceless/deviceless.handler.ts).
+    *   This handler contains the business logic to update the state of the associated delivery in the **Deliveries PostgreSQL database**, marking it as ready for loading or completed.
+
+### Operations Service (The Business Logic)
+
+- **Role**: Applies business rules (maintenance toggles, operational readiness) to raw state.
+- **Persistence**: [`RobotStateHistory`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/prisma/schema.prisma) (PostgreSQL), Ephemeral Data (Redis). The Redis cache is managed by the [`RobotEphemeralDataService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robot-ephemeral-data.service.ts) and holds transient state like connectivity and component health.
+- **Outputs**: `RobotStateHistory` updates, Redis cache updates.
+
+**Processing Flow (State Change Write Path)**:
+
+```mermaid
+sequenceDiagram
+    participant S as State Service
+    participant RMQ as RabbitMQ
+    participant O as Operations Service
+    participant PG as Ops DB (Postgres)
+    participant Redis as Ops Redis
+
+    S->>S: Detect State Transition
+    S->>RMQ: Publish Robots.StateChange
+    RMQ->>O: Consume StateChange
+    O->>PG: Update RobotStateHistory
+    O->>Redis: Invalidate/Update Cache
+
+```
+
+This diagram illustrates how changes in a robot's core state (e.g., from `PARKED` to `ON_TRIP`) are processed and enriched with business logic.
+
+1. **Detection**: The [`StateService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/state.service.ts) in the `State Service` detects a significant state transition while processing incoming telemetry.
+2. **Publication**: It publishes a discrete [`Robots.StateChange`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) event to RabbitMQ.
+3. **Consumption**: A handler in the `Operations Service`, such as the [`IotHeartbeatHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/handlers/iot-heartbeat-handler.ts), consumes this event.
+4. **Business Logic & Persistence**: The handler applies business rules (e.g., checking for maintenance flags via [`getRobotOperationalReadinessIssue`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robots.service.ts)) and then updates its own [`RobotStateHistory`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/prisma/schema.prisma) table in **PostgreSQL**.
+5. **Cache Update**: It also updates its **Redis** cache via the [`RobotEphemeralDataService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robot-ephemeral-data.service.ts) to ensure subsequent on-demand reads have the freshest data.
+
+**Operations Service Schema**:
+
+```
+model RobotStateHistory {
+  robotSerial           String
+  operationState        RobotStateEventState // ON_TRIP, PARKED, GROUNDED, OFF_DUTY, DEPLOYED
+  needsMovement         Boolean
+  undergoingMaintenance Boolean
+  hasFood               Boolean
+  driveable             Boolean
+}
+
 ```
