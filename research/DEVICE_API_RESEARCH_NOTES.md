@@ -1,32 +1,4 @@
-# DEVICE API RESEARCH NOTES
-
-## Table of Contents
-- [DEVICE API RESEARCH NOTES](#device-api-research-notes)
-  - [Table of Contents](#table-of-contents)
-  - [System Overview](#system-overview)
-- [Part 1: Core Services \& Data Sources](#part-1-core-services--data-sources)
-  - [Data Sources \& Ingestion](#data-sources--ingestion)
-    - [Physical Robots (MQTT)](#physical-robots-mqtt)
-    - [DriveU (Teleoperation Webhooks \& API)](#driveu-teleoperation-webhooks--api)
-    - [MQTT-to-Kafka Bridge](#mqtt-to-kafka-bridge)
-    - [AWS Greengrass (Software Management)](#aws-greengrass-software-management)
-  - [Key Services](#key-services)
-    - [State Service: The Raw Data Processor](#state-service-the-raw-data-processor)
-    - [Operations Service: The Business Logic Hub](#operations-service-the-business-logic-hub)
-    - [Fleet Service: The Hybrid Telemetry \& Business Cache](#fleet-service-the-hybrid-telemetry--business-cache)
-      - [Redis Cache Schema](#redis-cache-schema)
-      - [DynamoDB Schema (`fleet-robots` table)](#dynamodb-schema-fleet-robots-table)
-      - [APIs](#apis)
-    - [Dispatch Engine: The Planning Supply Cache](#dispatch-engine-the-planning-supply-cache)
-- [Part 2: End-to-End Consumption Patterns](#part-2-end-to-end-consumption-patterns)
-  - [How Mission Control \& MDS Get Robot State](#how-mission-control--mds-get-robot-state)
-  - [How Services Get Real-time Data from Fleet](#how-services-get-real-time-data-from-fleet)
-      - [Use Case 1: Real-time Telemetry for Dispatching](#use-case-1-real-time-telemetry-for-dispatching)
-      - [Use Case 2: ID Resolution for Provider Integrations](#use-case-2-id-resolution-for-provider-integrations)
-  - [How DoorDash Gets Status Updates](#how-doordash-gets-status-updates)
-  - [The Unlock \& Loading Flow](#the-unlock--loading-flow)
-
-## System Overview
+# 1. System Overview
 
 This diagram illustrates the entire ecosystem: how data flows from robots and external providers into our system, how it propagates between internal services, and how it is finally consumed by internal applications and external partners.
 
@@ -94,9 +66,8 @@ graph TD
 
 ---
 
-# Part 1: Core Services & Data Sources
-## Data Sources & Ingestion
-### Physical Robots (MQTT)
+# 2. Data Sources & Ingestion
+### 2.1 Physical Robots (MQTT)
 
 - **Protocol**: MQTT via AWS IoT.
 - **Data**: Telemetry (Location, Battery), Connectivity.
@@ -130,7 +101,7 @@ The flow is orchestrated by these key components:
 3. **Bridge (`mqtt_bridge`)**: This is a generic ROS-to-MQTT bridge. It subscribes to the `HardwareStatus` ROS topic and, based on its configuration in [`topics.yaml`](https://github.com/cocorobotics/coco-acu/blob/develop/src/mqtt_bridge/config/topics.yaml), publishes the content of that message to an AWS IoT MQTT topic (e.g., `robot/123/status`). The core logic for this is in [`bridge.py`](https://github.com/cocorobotics/coco-acu/blob/develop/src/mqtt_bridge/src/mqtt_bridge/bridge.py).
 4. **Backend Consumer**: As previously detailed, the message is routed via an AWS IoT Rule to an SQS queue, which is consumed by the [`IotStreamerService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/iot-streamer/iot-streamer.service.ts) in the `State Service`.
 
-### DriveU (Teleoperation Webhooks & API)
+### 2.2 DriveU (Teleoperation Webhooks & API)
 
 **Role**: Provides low-latency video streaming and remote control connectivity status.
 
@@ -179,7 +150,7 @@ interface IWebhookEvent {
 
 ([`IWebhookEvent` source](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/drive-u/interfaces/webhook-event.interface.ts))
 
-### MQTT-to-Kafka Bridge
+### 2.3 MQTT-to-Kafka Bridge
 
 While the `State Service` consumes MQTT messages for its own processing, there is a parallel path that forwards raw telemetry directly to Kafka for the `Fleet Service`. This is handled by a dedicated bridge service.
 
@@ -207,7 +178,7 @@ This flow acts as a high-throughput bridge to get raw robot telemetry into the K
 3.  **Kafka Production**: For each message it receives, this service instantiates a [`kafka.NewProducer`](https://github.com/cocorobotics/coco-services/blob/master/core/kafka/producer.go) and publishes the payload to a Kafka topic.
 4.  **Fleet Service Consumption**: As documented previously, the `Fleet Service`'s [`robot_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/robot_consumer.go) subscribes to this Kafka topic to receive the real-time telemetry.
 
-### AWS Greengrass (Software Management)
+### 2.4 AWS Greengrass (Software Management)
 
 **Integration Flow**:
 
@@ -263,9 +234,9 @@ The data structures for Greengrass objects are defined by the AWS SDK and aliase
 
 ---
 
-## Key Services
+# 3. Core Services
 
-### State Service: The Raw Data Processor
+### 3.1 State Service: The Raw Data Processor
 
 - **Role**: Raw event ingestion, normalization, and initial persistence.
 - **Persistence**: [`StateHistory`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/prisma/schema.prisma) (PostgreSQL), DriveU Status (DynamoDB).
@@ -314,7 +285,7 @@ model StateHistory {
 
 ```
 
-### Operations Service: The Business Logic Hub
+### 3.2 Operations Service: The Business Logic Hub
 
 - **Role**: Applies business rules (maintenance toggles, operational readiness) to raw state.
 - **Persistence**: [`RobotStateHistory`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/prisma/schema.prisma) (PostgreSQL), Ephemeral Data (Redis). The Redis cache is managed by the [`RobotEphemeralDataService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robot-ephemeral-data.service.ts) and holds transient state like connectivity and component health.
@@ -360,7 +331,7 @@ model RobotStateHistory {
 
 ```
 
-### Fleet Service: The Hybrid Telemetry & Business Cache
+### 3.3 Fleet Service: The Hybrid Telemetry & Business Cache
 
 - **Role**: Fleet management and provider integrations (Uber).
 - **Data Sources**:
@@ -402,7 +373,7 @@ This diagram shows the dual-ingestion model of the Fleet Service, which separate
     *   The [`legacy_robots_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/consumer.go) subscribes to lower-frequency business state events from a RabbitMQ exchange, which are published by the `Operations Service`.
     *   **Business State Persistence**: This consumer's sole job is to update the business-related fields on the `FleetRobot` item in **DynamoDB**. It receives events that contain information not available in raw telemetry, such as `HasFood`, `NeedsMaintenance`, and the overall `OperationalState` (e.g., `ON_TRIP`, `PARKED`). This ensures that the canonical record in DynamoDB reflects both the robot's physical state and its current business context.
 
-#### Redis Cache Schema
+#### 3.3.1 Redis Cache Schema
 
 The Fleet Service uses Redis for high-frequency caching of telemetry data.
 
@@ -425,7 +396,7 @@ type RobotState struct {
 
 ```
 
-#### DynamoDB Schema (`fleet-robots` table)
+#### 3.3.2 DynamoDB Schema (`fleet-robots` table)
 
 This is the primary operational data store for the Fleet Service, aggregating telemetry and business state.
 
@@ -460,14 +431,14 @@ type FleetRobot struct {
 
 ```
 
-#### APIs
+#### 3.3.3 APIs
 
 The Fleet Service exposes its data primarily through a **gRPC API** (and a corresponding HTTP gateway). It offers two main service scopes for consumers:
 
 1. **`FleetLaborProviderScopeService`**: Exposes the [`Get` method](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/handlers/grpc/grpc_labor_scope.go) to provide real-time robot state (location, battery, status) by reading directly from the Redis cache. This is optimized for high-frequency requests.
 2. **`FleetBeaconScopeService`**: Exposes methods like [`GetVirtualRobot` and `GetExternalRobotMappings`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/handlers/grpc/grpc_beacon_scope.go) that query DynamoDB. This is used to link provider-specific identifiers (e.g., from Uber) to our internal `FleetRobot` entities.
 
-### Dispatch Engine: The Planning Supply Cache
+### 3.4 Dispatch Engine: The Planning Supply Cache
 
 - **Role**: Maintains a near real-time cache of available robots (`supply`) to make high-performance planning decisions without querying other services.
 - **Persistence**: `Resource` table (PostgreSQL) with an in-memory/Redis cache. Robot state is stored in a `jsonb` column, using the `LegacyRobot` type as its schema.
@@ -532,9 +503,9 @@ export type LegacyRobot = {
 
 ---
 
-# Part 2: End-to-End Consumption Patterns
+# 4. End-to-End Consumption Patterns
 
-## How Mission Control & MDS Get Robot State
+## 4.1 How Mission Control & MDS Get Robot State
 
 - **Pattern**: **Aggregated Query**. Both Mission Control and the MDS Service act as clients that make on-demand HTTP requests to the `Operations Service`. The `Operations Service` serves as a facade, aggregating data from multiple sources to provide a comprehensive, real-time view of a robot's state.
 - **Mission Control**: The frontend client, defined in [`device.api.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/web/mission-control/src/api/device.api.ts), calls endpoints on the `Operations Service` to fetch robot details for monitoring and debugging.
@@ -573,11 +544,11 @@ The `Operations Service`'s core aggregation logic resides within the [`RobotsSer
 3. **If the cache is empty (a "cache miss"), it makes a fallback synchronous RPC call to the `State Service`** to get the most recent raw state. This is handled by the [`StateServiceRpc`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/core/rpc/state-service.rpc.ts) client. This ensures data is always available, even if the cache is cold.
 4. Finally, it aggregates these different data sources into a single, unified response for the client.
 
-## How Services Get Real-time Data from Fleet
+## 4.2 How Services Get Real-time Data from Fleet
 
 While some services subscribe to events, others query the Fleet Service's gRPC API directly to get real-time state or mapping information. This pattern is used when a service needs immediate, specific information about a robot without maintaining its own local copy of the fleet's state. The two primary use cases are real-time telemetry for dispatching and ID resolution for provider integrations.
 
-#### Use Case 1: Real-time Telemetry for Dispatching
+#### #### 4.2.1 Use Case 1: Real-time Telemetry for Dispatching
 
 The Dispatch Engine needs the most up-to-date, low-latency state of all robots to make efficient planning decisions. It achieves this by querying the `FleetLaborProviderScope`, which reads directly from the Redis cache.
 
@@ -607,7 +578,7 @@ Here is the step-by-step flow:
 4.  **Supply Service**: To find a suitable robot, the `PlannerService` needs a list of all available robots. It calls the [`getRobots` method](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/supply/service/supply.service.ts#L104) on the `SupplyService`.
 5.  **Fleet Client Call**: The `SupplyService` uses a client wrapper to make a `FleetLaborProviderScope.Get` gRPC call to the `Fleet Service`. This call is designed for high performance, fetching the [`foundation.RobotState`](https://github.com/cocorobotics/coco-services/blob/master/core/foundation/robot.go) object directly from the **Redis cache**.
 
-#### Use Case 2: ID Resolution for Provider Integrations
+#### #### 4.2.2 Use Case 2: ID Resolution for Provider Integrations
 
 This flow is used by provider integrations (like Uber) to resolve an internal robot serial number into a provider-specific vehicle ID. This is necessary because external partners track our robots using their own identifiers.
 
@@ -640,7 +611,7 @@ Here is the step-by-step flow:
 7.  **Business Logic**: The `Integrations Service` can now proceed with its business logic, having resolved the correct vehicle ID.
 
 
-## How DoorDash Gets Status Updates
+## ## 4.3 How DoorDash Gets Status Updates
 
 This flow is used to keep external partners like DoorDash synchronized with the state of a delivery. The crucial insight is that the process is initiated by a low-level robot heartbeat, which is then translated into a high-level business event by the `Operations Service` before being consumed by the `Integrations Service`.
 
@@ -680,7 +651,7 @@ This entire flow demonstrates how a change in a robot's physical state cascades 
 **Schema (`VehicleStatus` sent to DoorDash)**:
 The payload sent to DoorDash is defined by the [`VehicleStatus` type](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/doordash/v3/types/API.ts). The key field that connects this flow back to the device's state is `vehicle_location`.
 
-## The Unlock & Loading Flow
+## ## 4.4 The Unlock & Loading Flow
 
 This flow describes how a user action (entering a pin, receiving an automated unlock command) translates into a physical lid opening and how that event propagates through the system to affect a delivery. It also covers the subsequent physical closing of the lid.
 
