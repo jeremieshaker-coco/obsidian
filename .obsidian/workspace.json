@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "research/DEVICE_API_RESEARCH_NOTES.md",
+                "file": "reference/Intelligent Blockage Creation Flow.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "DEVICE_API_RESEARCH_NOTES"
+              "title": "Intelligent Blockage Creation Flow"
             }
           },
           {
@@ -209,8 +209,9 @@
   },
   "active": "21b796371860b777",
   "lastOpenFiles": [
-    "designs/Event Logging - Proposal.md",
+    "research/Integration_Test_Seeding_via_App_Entrypoints.md",
     "research/DEVICE_API_RESEARCH_NOTES.md",
+    "designs/Event Logging - Proposal.md",
     "requirements/Event Logging - Engineering Spec.md",
     "tasks/Event Logging - Implementation Plan.md",
     "designs/Log-Driven OLAP Metrics - Implementation Plan.md",
@@ -238,7 +239,6 @@
     "reference/Dispatch Engine - handleDeliveryLoaded.md",
     "reference/Dispatch Engine - Data Consistency.md",
     "personal/2025-11-18.md",
-    "2025-11-18.md",
     "meeting notes",
     "personal",
     "designs",
