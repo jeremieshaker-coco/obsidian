@@ -352,3 +352,4 @@ export function createPilotSupplyEvent(params: Partial<PilotSupplyEventPayload>)
 - `test/demand/demand.integration.spec.ts` — Current integration test pattern
 
 
+
