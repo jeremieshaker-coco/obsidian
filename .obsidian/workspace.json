@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "requirements/Event Logging - Engineering Spec.md",
+                "file": "research/DEVICE_API_RESEARCH_NOTES.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Event Logging - Engineering Spec"
+              "title": "DEVICE_API_RESEARCH_NOTES"
             }
           },
           {
@@ -209,19 +209,28 @@
   },
   "active": "21b796371860b777",
   "lastOpenFiles": [
+    "savedchats/cursor_design_read_only_device_api.md",
+    "savedchats",
+    "Users/jeremieshaker",
+    "Users",
+    "designs/device_api.proto",
     "tasks/Event Logging - Implementation Plan.md",
+    "research/DEVICE_API_RESEARCH_NOTES.md",
+    "requirements/Event Logging - Engineering Spec.md",
+    "designs/Event Logging - Technical Design.md",
+    "requirements/Event Logging - Requirements.md",
+    "goals/company.md",
+    "goals",
     "proposals/Event Logging - Proposal.md",
     "Log-Driven OLAP Metrics - Implementation Plan 1.md",
     "proposals/Log-Driven OLAP Metrics - Business Proposal.md",
     "designs/Device API - Technical Design.md",
     "tasks/Device API - Implementation Milestones.md",
     "designs/Device API - Implementation Milestones.md",
-    "requirements/Event Logging - Engineering Spec.md",
     "requirements/Device API - Product Requirements Document.md",
     "proposals/Proposal - Improving Developer Productivity and Onboarding.md",
     "reference/Intelligent Blockage Creation Flow.md",
     "research/Integration_Test_Seeding_via_App_Entrypoints.md",
-    "research/DEVICE_API_RESEARCH_NOTES.md",
     "designs/Log-Driven OLAP Metrics - Implementation Plan.md",
     "tasks/Log-Driven OLAP Metrics - Implementation Plan 1.md",
     "reference/Maps Service.md",
@@ -235,15 +244,6 @@
     "research",
     "reference/Point-to-Point (P2P) Dispatch.md",
     "reference/P2P Dispatch Sequence Flow.md",
-    "reference/Continuous Replanning.md",
-    "reference/Dispatch Engine - Orphaned Demands.md",
-    "reference/Dispatch Engine - handleDeliveryLoaded.md",
-    "reference/Dispatch Engine - Data Consistency.md",
-    "meeting notes",
-    "personal",
-    "designs",
-    "reference",
-    "Personal",
-    "TypeScript"
+    "meeting notes"
   ]
 }
