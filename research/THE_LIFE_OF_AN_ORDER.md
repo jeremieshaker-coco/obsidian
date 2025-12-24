@@ -171,11 +171,11 @@ flowchart TD
     subgraph ATCUSTOMER["🏠 AT CUSTOMER PHASE"]
         BH --> BI[Trip status: AT_DESTINATION]
         BI --> BJ[Attempt status: AtDestination]
-        BJ --> BK[Customer SMS: "Coco has arrived!"]
+        BJ --> BK[Customer SMS: Coco has arrived!]
         BK --> BL[Schedule reminder SMS]
         BL --> BM[Customer approaches robot]
         BM --> BN{How does customer unlock?}
-        BN --> |App button| BO["Open my Coco" in tracker]
+        BN --> |App button| BO[Open my Coco button in tracker]
         BN --> |PIN| BP[Enter PIN on keypad]
         BO --> BQ[API: unloadRobotForDelivery]
         BP --> BQ
