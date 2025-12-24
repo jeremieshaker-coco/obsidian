@@ -9,7 +9,9 @@ Best practices and common pitfalls discovered while writing unit tests for NestJ
 All external dependencies of a service must be mocked using the `Test.createTestingModule`.
 
 - **Incomplete Mocks**: A frequent source of errors is an incomplete mock. Ensure that all methods on a mocked service that are called by the service-under-test have mock implementations (e.g., using `jest.fn()`).
-- **Prisma Enums**: Prisma enums are not automatically available in the Jest test environment and must be mocked. This can be done at the top of a `.spec.ts` file:
+- **Prisma Enums**: Prisma enums are not automatically available in the Jest test environment if the client hasn't been generated correctly. While manual mocking is possible, it is brittle. The preferred approach is to ensure the client is generated via `yarn workspace <service> run prisma:generate`. See [[Prisma Client Generation in Monorepo]].
+
+  If manual mocking is absolutely required (e.g. for speed in isolated tests), it can be done like this:
   ```typescript
   jest.mock('@prisma/client', () => {
     const originalModule = jest.requireActual('@prisma/client');
