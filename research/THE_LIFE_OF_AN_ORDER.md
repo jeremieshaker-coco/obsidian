@@ -5,25 +5,16 @@ This document provides an exhaustive walkthrough of a delivery order's complete 
 ---
 
 ## Table of Contents
-0. [**End-to-End Flow Diagram**](#0-end-to-end-flow-diagram) ⭐
-1. [System Overview](#1-system-overview)
-2. [Order Creation & Intake](#2-order-creation--intake)
-3. [Quoting & Acceptance](#3-quoting--acceptance)
-4. [Dispatch & Robot Assignment](#4-dispatch--robot-assignment)
-5. [The Loading Phase](#5-the-loading-phase)
-6. [In-Transit: Robot to Customer](#6-in-transit-robot-to-customer)
-7. [Customer Pickup](#7-customer-pickup)
-8. [Order Fulfillment](#8-order-fulfillment)
-9. [Cancellation Scenarios](#9-cancellation-scenarios)
-10. [Robot Health & Failure Modes](#10-robot-health--failure-modes)
-11. [Rescue & Recovery Flows](#11-rescue--recovery-flows)
-12. [Field Operations Tasks](#12-field-operations-tasks)
-13. [Notifications Throughout the Lifecycle](#13-notifications-throughout-the-lifecycle)
-14. [Appendix: State Machines](#appendix-state-machines)
+1. [**End-to-End Flow Diagram**](#1-end-to-end-flow-diagram) ⭐ *Complete lifecycle with all decision points*
+2. [Key Concepts](#2-key-concepts) *Entities and services overview*
+3. [Cancellation Scenarios](#3-cancellation-scenarios) *All 40+ cancellation reasons*
+4. [Robot Health & Failure Modes](#4-robot-health--failure-modes) *Component monitoring and health checks*
+5. [Field Operations Tasks](#5-field-operations-tasks) *FO task types and triggers*
+6. [Appendix: State Machines](#6-appendix-state-machines) *Delivery, Attempt, Robot, and Trip states*
 
 ---
 
-## 0. End-to-End Flow Diagram
+## 1. End-to-End Flow Diagram
 
 This is the complete lifecycle of a successful delivery, from demand to fulfillment.
 
@@ -419,605 +410,72 @@ flowchart TD
 
 ---
 
-## 1. System Overview
-
-The order lifecycle involves multiple services working in concert:
-
-```mermaid
-graph TD
-    subgraph "External Partners"
-        DD[DoorDash]
-        Uber[Uber Eats]
-        Huuva[Huuva]
-    end
-    
-    subgraph "Intake Layer"
-        IntSvc[Integrations Service]
-        DelSvc[Deliveries Service]
-    end
-    
-    subgraph "Planning Layer"
-        DispEng[Dispatch Engine]
-        FleetSvc[Fleet Service]
-    end
-    
-    subgraph "Execution Layer"
-        OpsSvc[Operations Service]
-        StateSvc[State Service]
-    end
-    
-    subgraph "Physical"
-        Robot[Robot]
-        Merchant[Merchant]
-        Customer[Customer]
-    end
-    
-    DD -->|Webhook| IntSvc
-    Uber -->|Webhook| IntSvc
-    Huuva -->|API| IntSvc
-    IntSvc -->|Create Delivery| DelSvc
-    DelSvc -->|Quote/Confirm| DispEng
-    DispEng -->|Supply Query| FleetSvc
-    DispEng -->|Trip Creation| OpsSvc
-    OpsSvc -->|Lid Commands| StateSvc
-    StateSvc <-->|MQTT| Robot
-    Robot <-->|Physical| Merchant
-    Robot <-->|Physical| Customer
-```
+## 2. Key Concepts
 
 **Key Entities**:
 - **Delivery**: The high-level order record. Has a status like `Scheduled`, `InProgress`, `Completed`, or `Canceled`.
 - **Attempt**: A specific effort to fulfill a delivery. A delivery may have multiple attempts (e.g., robot attempt followed by a rescue attempt).
 - **Demand**: The Dispatch Engine's representation of work to be done.
 - **Trip**: The Operations Service's representation of a robot/pilot task.
+- **LidCycle**: Tracks the lifecycle of lid open/close events for loading and unloading.
+
+**Key Services**:
+- **Integrations Service**: Partner webhook ingestion (DoorDash, Uber, Huuva)
+- **Deliveries Service**: Order management and attempt lifecycle
+- **Dispatch Engine**: Planning, robot/pilot assignment, ETA calculations
+- **Operations Service**: Trip management, pilot assignments, robot state
+- **State Service**: Robot telemetry processing, lid cycle management
+- **Fleet Service**: Real-time robot supply cache, provider integrations
 
 ---
 
-## 2. Order Creation & Intake
+## 3. Cancellation Scenarios
 
-### 2.1 Entry Points
+### 3.1 All Cancellation Reasons
 
-Orders enter the system through three main pathways:
+There are many reasons an order might be cancelled, organized by category:
 
-1. **Partner Integrations (DoorDash, Uber Eats, Huuva)**: External partners send order requests via webhooks to the [`Integrations Service`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/). The service normalizes the request and forwards it to the Deliveries Service.
+| Category | Cancellation Reason | Description |
+|----------|---------------------|-------------|
+| **Hardware Issues** | HardwareIssue | General hardware failure |
+| | BotFlipped | Robot tipped over |
+| | BotStuck | Robot unable to move |
+| | BotHit | Robot was struck by object/vehicle |
+| **Software Issues** | SoftwareIssue | Software malfunction or bug |
+| **Merchant Issues** | MerchantError | General merchant-side error |
+| | MerchantRequested | Merchant cancelled the order |
+| | MerchantTabletIssue | Tablet not responding or malfunctioning |
+| | MerchantUnresponsive | Merchant not responding to robot arrival |
+| | LargeOrder | Order too large for robot capacity |
+| | LongLoad | Loading took too long |
+| **Customer Issues** | CustomerRequested | Customer cancelled the order |
+| | CustomerRequested_Unable | Customer unable to receive delivery |
+| | CustomerRequested_Unwilling | Customer changed mind about delivery |
+| | CustomerUnresponsive | Customer not responding at dropoff |
+| | CustomerBlacklisted | Customer flagged in system |
+| | IdCheck | Age verification required but failed |
+| **Supply Issues** | PilotAvailability | No pilots available |
+| | RobotAvailability | No robots available |
+| | RobotDeliveriesDisabledByMerchant | Merchant disabled robot deliveries |
+| | RobotDeliveriesDisabledByOperatingZone | Zone settings disabled robot deliveries |
+| **Environmental** | WeatherConditions | Unsafe weather (rain, snow, wind) |
+| | TerrainIssue | Terrain too difficult to navigate |
+| | Obstruction | Path blocked by object |
+| | RouteBlocked | Route inaccessible |
+| **Other** | CourierFailure | Human courier (rescue) failed |
+| | RoutingFailed | Unable to calculate valid route |
+| | NotRobotAddressable | Destination not reachable by robot |
+| | BotRescue | Rescue operation initiated |
+| | DeliveryWatchdog | Watchdog system triggered cancellation |
+| | Other | Unspecified reason |
 
-2. **Merchant UI Direct Orders**: Merchants can create orders directly through the Merchant UI, which calls the Deliveries Service API.
-
-3. **Storefront Orders**: Orders placed through Coco's own ordering platform.
-
-### 2.2 The Create Flow
-
-When an order comes in, the Integrations Service:
-
-1. **Stores PII** via the Privacy Service (addresses, phone numbers are redacted)
-2. **Requests a Quote** from the Deliveries Service
-3. **Validates SLA** (checks if estimated pickup time meets requirements)
-4. **Accepts the Quote** to create the delivery
-
-```typescript
-// From huuva.service.ts - representative of all integrations
-async createDelivery(request: DeliveryRequest): Promise<CocoDelivery | Error> {
-  // 1. Save PII
-  const customerId = await this.privacy.createPii({ ... });
-  
-  // 2. Get quote
-  const quote = await this.getQuote(piiRedactedRequest);
-  
-  // 3. Validate SLA
-  const slaFailureReason = await this.getSLAFailureReason(request, quote);
-  if (slaFailureReason) {
-    return new BadRequestException(slaFailureReason);
-  }
-  
-  // 4. Accept quote
-  const delivery = await this.acceptQuote(quote.id);
-  return delivery;
-}
-```
-
-**Source**: [`service/integrations/src/huuva/huuva.service.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/huuva/huuva.service.ts)
+**Source**: `AttemptCancellationReason` enum in [`service/operations/prisma/schema.prisma`](service/operations/prisma/schema.prisma)
 
 ---
 
-## 3. Quoting & Acceptance
+## 4. Robot Health & Failure Modes
 
-### 3.1 The Quote Process
-
-When the Deliveries Service receives a quote request, it:
-
-1. **Validates the request** (merchant exists, address is serviceable, etc.)
-2. **Calls the Dispatch Engine** to get an estimate
-3. **Returns estimated pickup/dropoff times** to the caller
-
-The Dispatch Engine's [`PlannerService.estimate()`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/planner/service/planner.service.ts) method:
-
-1. **Loads current supply** (available robots and pilots)
-2. **Calculates routes** (pickup to dropoff, dropoff to return)
-3. **Generates time estimates** for each leg of the journey
-4. **Returns a quote** with estimated times and the assigned robot
-
-### 3.2 Quote Failure Reasons (Limiting Factors)
-
-If we cannot fulfill an order, the quote returns a `LimitingFactor`:
-
-```typescript
-enum LimitingFactor {
-  PilotAvailability,           // No pilots on shift
-  RobotAvailability,           // No healthy robots available
-  RobotDeliveriesDisabledByOperatingZone,
-  RobotDeliveriesDisabledByMerchant,
-  OutsideAvailabilityWindow,   // Outside operating hours
-  Unroutable,                  // Cannot find a path
-  NotRobotAddressable,         // Address not in robot delivery zone
-  Unknown
-}
-```
-
-**Source**: [`service/dispatch-engine/prisma/schema.prisma`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/prisma/schema.prisma)
-
-### 3.3 Quote Acceptance
-
-When a quote is accepted (`PlannerService.create()`):
-
-1. **Creates Demand records** in the Dispatch Engine DB
-2. **Creates Trip records** in the Operations Service
-3. **Schedules the robot** for the delivery
-4. **Returns a confirmed delivery** with ETA
-
----
-
-## 4. Dispatch & Robot Assignment
-
-### 4.1 Supply Management
-
-The Dispatch Engine maintains a real-time view of available resources:
-
-- **Robots**: Serial, location, battery, health status, current assignment
-- **Pilots**: Shift status, experience level, current assignment
-
-Supply is updated via:
-- **IoT Heartbeats**: Robot telemetry published every few seconds
-- **Robot State Changes**: Published by Operations Service
-- **Pilot Status Updates**: Shift start/end, break status
-
-### 4.2 The Assignment Algorithm
-
-The planner evaluates robots based on:
-
-1. **Proximity** to the pickup location
-2. **Battery level** (sufficient for the trip)
-3. **Health status** (must pass health check)
-4. **Current workload** (not already assigned)
-5. **Maintenance flags** (`needsMaintenance`, `undergoingMaintenance`)
-
-### 4.3 Robot Reassignment
-
-If an assigned robot becomes unavailable *before* the trip starts:
-
-1. **Detection**: During replan, system identifies the robot is unusable
-2. **Orphaning**: The demand is marked as orphaned
-3. **Re-planning**: System attempts to find a replacement robot
-4. **Logging**: Event logged with `oldDeviceId`, `newDeviceId`, `demandId`
-
-**Reassignment Triggers**:
-- Robot goes offline
-- Robot becomes unhealthy
-- Battery drops below threshold
-- Robot is grounded for maintenance
-
-**Source**: [`service/dispatch-engine/src/modules/planner/handlers/external-demand-update.handler.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/planner/handlers/external-demand-update.handler.ts)
-
----
-
-## 5. The Loading Phase
-
-### 5.1 Robot Arrival at Merchant
-
-When the robot arrives at the pickup location:
-
-1. **Attempt status** transitions to `AtPickup`
-2. **Merchant notification** is sent (SMS, app notification, tablet alert)
-3. **Unlock PIN** is set on the robot (if applicable)
-4. **Load timer** starts (to track long loads)
-
-### 5.2 How the Merchant Identifies the Robot
-
-Merchants identify which robot to load via:
-
-1. **Merchant Tablet**: Shows the robot serial and order details
-2. **QR Code**: Merchant scans a QR code to see active orders
-3. **Robot Display**: The robot's screen may show order information
-4. **Physical Marking**: Robots have visible serial numbers
-
-### 5.3 Opening the Lid for Loading
-
-There are multiple mechanisms for opening the robot lid:
-
-| Method | How It Works | Primary Use Case |
-|--------|--------------|------------------|
-| **2-Digit PIN (Deviceless)** | Merchant enters PIN on robot keypad → Backend validates → Sends open command | Standard merchant loading |
-| **4-Digit PIN (Magic Lid)** | Merchant enters PIN → Firmware validates locally → Opens without backend command | Uber Eats orders |
-| **Pinless/Proximity** | Any touch on keypad → Firmware opens if proximity detected | High-trust merchants |
-| **QR Scan** | Merchant scans QR → Web app triggers backend open command | Fallback/alternative |
-
-**PIN Flow (2-Digit)**:
-```mermaid
-sequenceDiagram
-    participant M as Merchant
-    participant R as Robot Keypad
-    participant S as State Service
-    participant D as Deviceless Service
-    participant L as Lid Cycle Service
-    
-    M->>R: Enters 2-digit PIN
-    R->>S: PIN_ENTRY_LID_OPEN event
-    S->>D: onLidPinEntry(payload)
-    D->>D: findNearbyDelivery(pin, location)
-    D->>L: attemptOpenBot(serial, refId)
-    L->>R: Open lid command
-    R->>M: Lid opens
-```
-
-**Source**: [`service/deliveries/src/modules/deviceless/deviceless.service.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/deviceless/deviceless.service.ts)
-
-### 5.4 Closing the Lid After Loading
-
-The lid can be closed in several ways:
-
-1. **Physical Close**: Merchant physically pushes the lid closed
-2. **Robot Button**: Press the close button on the robot
-3. **Automatic**: After a timeout (feature-flagged)
-4. **App/Web**: Via merchant app or QR web interface
-
-When the lid closes, the system:
-1. **Receives `LidClose` event** from the robot
-2. **Completes the lid cycle** (marks `LID_CYCLE_COMPLETE`)
-3. **Transitions attempt status** to `LoadedWaitingForPilot`
-4. **Unsets the PIN** (so it can't be used again)
-5. **Publishes state updates** (hasFood=true, tripType=DELIVERY)
-
-### 5.5 Load Validation
-
-Before marking the robot as loaded, the system validates:
-
-```typescript
-// From load-attempted-rpc.handler.ts
-async checkRobotAvailabilityOnRobotLoadAttempted(data) {
-  // Check robot is not on another trip
-  if (robotCurrentTask != null) { ... }
-  
-  // Check robot doesn't need maintenance
-  if (latestRobotStateHistory?.needsMaintenance) {
-    return { error: "Robot needs maintenance", success: false };
-  }
-  
-  // Check robot isn't undergoing maintenance
-  if (latestRobotStateHistory?.undergoingMaintenance) {
-    return { error: "Robot undergoing maintenance", success: false };
-  }
-}
-```
-
-**Source**: [`service/operations/src/modules/fleet-management/handlers/load-attempted-rpc.handler.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fleet-management/handlers/load-attempted-rpc.handler.ts)
-
----
-
-## 6. In-Transit: Robot to Customer
-
-### 6.1 Trip Execution
-
-Once loaded:
-
-1. **Attempt status** → `LoadedWithPilot` (when pilot accepts)
-2. **Trip status** → `IN_TRANSIT`
-3. **Robot state** → `ON_TRIP`
-
-The pilot remotely controls the robot while monitoring:
-- Camera feeds
-- GPS location
-- Battery level
-- Obstacle sensors
-
-### 6.2 Customer Notifications
-
-SMS notifications are sent at key points:
-
-| Event | Message Example |
-|-------|-----------------|
-| **Confirmed** | "Your order from [merchant] will be delivered by Coco..." |
-| **InTransit** | "Coco has left [merchant] and is heading your way!" |
-| **Arrived** | "Coco has arrived! Use the Coco app to open Coco's lid and enjoy!" |
-
-**Reminder Flow**: If the customer doesn't pick up:
-- **First Reminder**: Sent after configurable delay
-- **Second Reminder**: Sent after additional delay
-
-**Source**: [`service/deliveries/src/modules/notifications/narratives/customer.sms.robot.narrative.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/notifications/narratives/customer.sms.robot.narrative.ts)
-
-### 6.3 ETA Updates
-
-Throughout transit, the system publishes ETA updates:
-- **ProviderEtaUpdated**: Real-time ETA based on current location
-- **Watchdog monitoring**: Detects late deliveries
-
----
-
-## 7. Customer Pickup
-
-### 7.1 Robot Arrival at Customer
-
-When the robot reaches the dropoff:
-
-1. **Attempt status** → `AtDestination`
-2. **Customer SMS** sent ("Coco has arrived!")
-3. **Customer reminders** scheduled
-4. **Unload timer** starts
-
-### 7.2 How the Customer Knows Which Robot
-
-Customers identify their robot via:
-
-1. **Tracking Link**: Shows robot location and serial
-2. **SMS**: Contains link to tracker
-3. **Robot Display**: Shows order confirmation code
-4. **Physical Proximity**: Customer walks to the robot location shown in app
-
-### 7.3 Opening the Lid for Pickup
-
-Customers unlock the robot using:
-
-1. **PIN Entry**: Customer enters their unlock PIN on robot keypad
-2. **App Button**: "Open my Coco" button in tracker web app
-3. **Pinless**: Touch keypad if pinless unlock is enabled
-
-**Customer Unlock Flow**:
-```mermaid
-sequenceDiagram
-    participant C as Customer
-    participant T as Tracker App
-    participant D as Deliveries Service
-    participant R as Robot Provider Service
-    participant S as State Service
-    participant Bot as Robot
-    
-    C->>T: Clicks "Open my Coco"
-    T->>D: POST /delivery/{id}/unload
-    D->>R: unloadRobot(deliveryId, ...)
-    R->>S: lidCommandSync(serial, OPEN, ...)
-    S->>Bot: MQTT Open Command
-    Bot->>C: Lid Opens
-```
-
-**Source**: [`service/deliveries/src/modules/delivery/service/delivery.service.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/delivery/service/delivery.service.ts)
-
-### 7.4 Closing the Lid After Pickup
-
-The lid closes via:
-
-1. **Physical Close**: Customer pushes lid closed
-2. **Robot Button**: Press close button
-3. **Auto-Close**: After timeout (if feature enabled)
-4. **Pilot Control**: Pilot can close remotely via controller
-
-**Important**: The system tracks whether the lid successfully latched:
-```typescript
-// From iot-streamer.service.ts
-if (!event.meta.lid_successfully_closed && ignoreFailure) {
-  this.logger.info('Lid failed to latch, but will send anyway');
-}
-```
-
-### 7.5 What If Customer Doesn't Close Lid?
-
-If the customer leaves the lid open:
-
-1. **Reminders** continue to be sent
-2. **Pilot intervention**: Pilot may close lid remotely
-3. **Timeout**: Eventually, system may auto-close or escalate
-4. **Watchdog**: Detects stuck delivery state
-
----
-
-## 8. Order Fulfillment
-
-### 8.1 When Is an Order "Fulfilled"?
-
-An order is marked as **Delivered** when:
-
-1. **Lid cycle completes at destination** (open → close)
-2. **Attempt status** → `Delivered`
-3. **Delivery status** → `Completed`
-
-The completion flow:
-```mermaid
-sequenceDiagram
-    participant Bot as Robot
-    participant S as State Service
-    participant D as Deliveries Service
-    participant DE as Dispatch Engine
-    participant I as Integrations
-    
-    Bot->>S: Lid Close Event
-    S->>S: Complete Lid Cycle
-    S->>D: LidCycle.Complete Event
-    D->>D: Update Attempt → Delivered
-    D->>D: Update Delivery → Completed
-    D->>DE: DemandUpdateEvent (status=Fulfilled)
-    D->>I: DeliveryEvent (type=completed)
-    I->>I: Notify Partner (DoorDash, Uber, etc.)
-```
-
-### 8.2 State Transitions for Completion
-
-```
-AttemptStatus.AtDestination
-    → AttemptStatus.DeliveryInProgress (lid opened)
-    → AttemptStatus.Delivered (lid closed)
-
-DeliveryStatus.InProgress
-    → DeliveryStatus.Completed
-```
-
-### 8.3 Post-Delivery Actions
-
-After fulfillment:
-
-1. **Robot state** → `hasFood: false`
-2. **Dispatch Engine** → Updates supply, clears demand
-3. **Operations Service** → Clears trip assignment
-4. **Partner Notification** → Status update sent to DoorDash/Uber
-5. **FO Tasks Cancelled** → Any pending EMPTY_BOT tasks are cancelled
-6. **Analytics** → Events logged for reporting
-
----
-
-## 9. Cancellation Scenarios
-
-### 9.1 Cancellation Reasons
-
-There are many reasons an order might be cancelled:
-
-```typescript
-enum AttemptCancellationReason {
-  // Hardware Issues
-  HardwareIssue,
-  BotFlipped,
-  BotStuck,
-  BotHit,
-  
-  // Software Issues
-  SoftwareIssue,
-  
-  // Merchant Issues
-  MerchantError,
-  MerchantRequested,
-  MerchantTabletIssue,
-  MerchantUnresponsive,
-  LargeOrder,
-  LongLoad,
-  
-  // Customer Issues
-  CustomerRequested,
-  CustomerRequested_Unable,
-  CustomerRequested_Unwilling,
-  CustomerUnresponsive,
-  CustomerBlacklisted,
-  IdCheck,
-  
-  // Supply Issues
-  PilotAvailability,
-  RobotAvailability,
-  RobotDeliveriesDisabledByMerchant,
-  RobotDeliveriesDisabledByOperatingZone,
-  
-  // Environmental
-  WeatherConditions,
-  TerrainIssue,
-  Obstruction,
-  RouteBlocked,
-  
-  // Other
-  CourierFailure,
-  RoutingFailed,
-  NotRobotAddressable,
-  BotRescue,
-  DeliveryWatchdog,
-  Other
-}
-```
-
-**Source**: [`service/operations/prisma/schema.prisma`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/prisma/schema.prisma)
-
-### 9.2 Pre-Load Cancellation
-
-**Scenario**: Order is cancelled before food is loaded into robot.
-
-**Impact**: Low. No food is stuck.
-
-**Flow**:
-1. Cancel request received (from partner, merchant, or internal)
-2. Attempt status → `Canceled`
-3. Delivery status → `Canceled`
-4. Robot released for other orders
-5. Partner notified
-
-### 9.3 Post-Load Cancellation (Food Stuck in Bot)
-
-**Scenario**: Order is cancelled after food has been loaded.
-
-**Impact**: High. Food is stuck in the robot.
-
-**Flow**:
-1. Cancel request received
-2. System checks: `hasFood == true`?
-3. **FO Task created**: `EMPTY_BOT` task assigned to field operator
-4. Robot may be grounded until emptied
-5. Attempt status → `Canceled`
-6. Delivery status → `Canceled`
-
-```typescript
-// FO Task creation for stuck food
-if (options instanceof EmptyTheBotOptions) {
-  return await this.buildEmptyTheBotTask(options);
-}
-```
-
-**Source**: [`service/operations/src/modules/fo-tasks/fo-tasks.factory.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fo-tasks/fo-tasks.factory.ts)
-
-### 9.4 Cancellation Due to Supply Issues
-
-If we run out of robots or pilots mid-delivery:
-
-1. **Watchdog detects** the issue (delivery is late)
-2. **Cancellation triggered** with reason `RobotAvailability` or `PilotAvailability`
-3. **Rescue flow** may be initiated (fallback to human courier)
-4. **Partner notified** of the failure
-
-### 9.5 Watchdog-Initiated Cancellation
-
-The Delivery Watchdog monitors for stuck/late deliveries:
-
-```typescript
-// Watchdog conditions
-[ConditionLabel.IsDeliveryLate]: (params) => {
-  return (delivery, eta) => deliveryIsLate(delivery, eta, params.timeBuffer);
-};
-
-[ConditionLabel.IsFoodInTransit]: () => {
-  return (delivery) => foodHasBeenLoaded(delivery);
-};
-```
-
-Actions the watchdog can take:
-- `CHANGE_PROVIDER`: Switch to human courier
-- `CANCEL_DELIVERY`: Cancel the order
-- `CREATE_TICKET`: Create support ticket
-- `NOTIFY_CUSTOMER`: Send update to customer
-
-**Source**: [`service/deliveries/src/modules/watchdog/service/conditions.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/watchdog/service/conditions.ts)
-
----
-
-## 10. Robot Health & Failure Modes
-
-### 10.1 What Makes a Robot "Healthy"?
-
-Robot health is determined by the aggregated status of its components:
-
-```typescript
-interface RobotHealth {
-  healthy: boolean;
-  components: {
-    [componentName: string]: {
-      status: 'OK' | string;
-      timestamp: number;
-      error: any;
-    }
-  }
-}
-```
-
-### 10.2 Monitored Components
+### 4.1 Monitored Components
 
 Key components monitored for health:
 
@@ -1034,7 +492,7 @@ Key components monitored for health:
 
 **Source**: [`obsidian/reference/Robot Component Heartbeats.md`](obsidian/reference/Robot Component Heartbeats.md)
 
-### 10.3 How Health Affects Orders
+### 4.2 How Health Affects Orders
 
 When a robot becomes unhealthy:
 
@@ -1050,134 +508,58 @@ When a robot becomes unhealthy:
 - Rescue flow initiated if possible
 - Robot grounded for maintenance
 
-### 10.4 Health State Change Notifications
+### 4.3 Health State Change Notifications
 
-When health state changes, Slack alerts are sent:
+When a robot's health state changes, automated Slack alerts are sent to the operations team. These alerts include:
+- The robot's serial number
+- Timestamp when the unhealthy state was detected
+- A list of all unhealthy components with their status and error details
 
-```typescript
-// From process-message.handler.ts
-const msg = [
-  `:alert: *Device ${data.serial} became unhealthy*`,
-  `*EffectiveSince*: ${new Date(data.processedAt).toISOString()}`,
-  `Unhealthy components:`,
-];
-for (const [name, component] of Object.entries(data.components)) {
-  if (!component.error) continue;
-  msg.push(`- *${name}* (${component.status}): ${JSON.stringify(component.error)}`);
-}
-```
+This allows the team to quickly identify and respond to hardware issues before they impact deliveries.
 
 **Source**: [`service/state/src/notification/process-message.handler.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/notification/process-message.handler.ts)
 
-### 10.5 Lid Malfunction
+### 4.4 Lid Malfunction
 
 If the lid is malfunctioning:
 
 1. **Pilot troubleshooting**: Pilot can try opening/closing via controller (X to open, A to close)
 2. **Multiple attempts**: System recommends 2-3 attempts before escalating
-3. **FO Request**: If issue persists, pilot requests Field Ops
-4. **Robot grounded**: Marked for maintenance
+3. **FO Request**: If issue persists, pilot requests Field Ops assistance through the UI
+4. **Robot grounded**: Marked for maintenance (`needsGrounding: true`)
 5. **Cancellation reason**: `HardwareIssue`
+6. **FO Task created**: `BOT_RESCUE` task assigned to retrieve any food and address the issue
 
-```typescript
-// From LidMalfunction.tsx (Pilot UI)
-<RequestFieldOps
-  type="Vehicle"
-  subtype="Lid malfunction"
-  cancellationReason={AttemptCancellationReason.HardwareIssue}
-  foTaskTypes={[FoAssistanceRequestType.BOT_RESCUE]}
-  needsGrounding={true}
-/>
-```
+The pilot UI provides a streamlined flow for reporting lid malfunctions and requesting field operations support.
 
 ---
 
-## 11. Rescue & Recovery Flows
+## 5. Field Operations Tasks
 
-### 11.1 What Triggers a Rescue?
+### 5.1 FO Task Types
 
-A rescue is needed when:
-- Robot becomes unhealthy mid-trip
-- Robot is stuck/flipped
-- Prolonged connectivity loss
-- Hardware failure prevents completion
+Field Operations tasks are categorized by type:
 
-### 11.2 Rescue Flow Overview
+| Category | Task Type | Purpose |
+|----------|-----------|---------|
+| **Robot Service** | PUT_UP_FLAG | Mark robot location with physical flag |
+| | BATTERY_SWAP | Replace robot battery in the field |
+| | PARKING_LOT_BATTERY_SWAP | Swap battery at parking lot |
+| | CLEAN_CAMERA | Clean robot camera lens |
+| | CLEAN_INSOLE | Clean robot interior/insole |
+| | EMPTY_BOT | Remove stuck food from robot |
+| | RETURN_TO_PARKING_LOT | Manual return to parking |
+| **Incident Response** | MOVE_BOT_FROM_CROSSWALK | Relocate robot from crosswalk |
+| | UNSTUCK_BOT | Free robot from obstacle |
+| | UNFLIP_BOT | Right a flipped robot |
+| | BOT_HIT | Respond to collision incident |
+| **Merchant Response** | TABLET_ISSUE | Fix merchant tablet problems |
+| | QR_ISSUE | Resolve QR code loading issues |
+| **On Trip Rescue** | DELIVERY_RESCUE | Complete delivery manually |
+| | BOT_PICKUP | Retrieve robot from field |
+| | SWAP_BOT | Replace failed robot with working one |
 
-```mermaid
-stateDiagram-v2
-    InProgress --> RescueRequested: Robot failure
-    RescueRequested --> RescueInProgress: Human courier dispatched
-    RescueInProgress --> Completed: Courier completes delivery
-    RescueInProgress --> Canceled: Unable to complete
-```
-
-### 11.3 Robot Reassignment (Pre-Load)
-
-If a robot becomes unavailable before food is loaded:
-
-1. Dispatch Engine detects the issue during replan
-2. Demand is orphaned
-3. New robot assigned (if available)
-4. Original robot released
-5. Minimal customer impact
-
-### 11.4 Rescue with Food (Post-Load)
-
-If a robot fails with food inside:
-
-1. **FO Notified**: Field Operator task created
-2. **FO Travels to Robot**: Using current GPS location
-3. **Food Retrieved**: FO opens lid manually
-4. **Delivery Options**:
-   - FO completes delivery manually (becomes rescue courier)
-   - Food returned to merchant
-   - Order cancelled and refunded
-
-### 11.5 Swap Bot Flow
-
-In some cases, we can swap the robot mid-delivery:
-
-1. FO retrieves food from broken robot
-2. FO loads food into healthy replacement robot
-3. Delivery continues with new robot
-4. Original robot grounded for maintenance
-
----
-
-## 12. Field Operations Tasks
-
-### 12.1 FO Task Types
-
-```typescript
-enum FoTaskType {
-  // Robot Service
-  PUT_UP_FLAG,
-  BATTERY_SWAP,
-  PARKING_LOT_BATTERY_SWAP,
-  CLEAN_CAMERA,
-  CLEAN_INSOLE,
-  EMPTY_BOT,
-  RETURN_TO_PARKING_LOT,
-  
-  // Incident Response
-  MOVE_BOT_FROM_CROSSWALK,
-  UNSTUCK_BOT,
-  UNFLIP_BOT,
-  BOT_HIT,
-  
-  // Merchant Response
-  TABLET_ISSUE,
-  QR_ISSUE,
-  
-  // On Trip Rescue
-  DELIVERY_RESCUE,
-  BOT_PICKUP,
-  SWAP_BOT,
-}
-```
-
-### 12.2 When FO Tasks Are Created
+### 5.2 When FO Tasks Are Created
 
 | Scenario | Task Type | Trigger |
 |----------|-----------|---------|
@@ -1189,7 +571,7 @@ enum FoTaskType {
 | Delivery rescue needed | `DELIVERY_RESCUE` | Robot failure with active delivery |
 | End of day pickup | `BOT_PICKUP` | Scheduled EOD |
 
-### 12.3 Task Lifecycle
+### 5.3 Task Lifecycle
 
 ```mermaid
 stateDiagram-v2
@@ -1201,51 +583,20 @@ stateDiagram-v2
     CANCELLED --> [*]
 ```
 
-### 12.4 Task and Delivery Coordination
+### 5.4 Task and Delivery Coordination
 
-When a delivery ends:
-```typescript
-// From delivery.handlers.ts
-async handleDeliveryTermination(payload) {
-  if (payload.delivery.status === DeliveryStatus.Completed) {
-    // Cancel any pending EMPTY_BOT tasks (no longer needed)
-    await this.service.cancelTasksForDelivery(payload.delivery.id, FoTaskType.EMPTY_BOT);
-  }
-  // Activate any scheduled tasks for this delivery
-  await this.service.activateTasksForDelivery(payload.delivery.id);
-}
-```
+When a delivery ends, the system automatically coordinates FO tasks:
+
+- **If delivery completed successfully**: Any pending `EMPTY_BOT` tasks are cancelled (since the food was successfully delivered, there's nothing to empty)
+- **Scheduled tasks activated**: Any tasks that were scheduled to run after delivery completion are now activated
+
+This automatic coordination ensures field operators aren't dispatched unnecessarily and that post-delivery tasks (like robot pickup or maintenance) are triggered at the right time.
+
+**Source**: [`delivery.handlers.ts`](service/operations/src/modules/fo-tasks/handlers/delivery.handlers.ts)
 
 ---
 
-## 13. Notifications Throughout the Lifecycle
-
-### 13.1 Customer Notifications
-
-| Stage                 | Channel | Message                                   |
-| --------------------- | ------- | ----------------------------------------- |
-| Order Confirmed       | SMS     | "Your order will be delivered by Coco..." |
-| Robot Leaves Merchant | SMS     | "Coco has left and is heading your way!"  |
-| Robot Arrives         | SMS     | "Coco has arrived! Open the lid..."       |
-| First Reminder        | SMS     | "Coco is ready and waiting..."            |
-| Second Reminder       | SMS     | "Coco is still excited to meet you..."    |
-| Cancelled             | SMS     | "Your delivery has been canceled..."      |
-
-### 13.2 Merchant Notifications
-
-- **Tablet alerts**: Order details displayed
-- **App notifications**: Push notifications for new orders
-- **SMS fallback**: If tablet unavailable
-
-### 13.3 Internal Notifications
-
-- **Slack alerts**: Device health changes, critical failures
-- **Datadog metrics**: Real-time monitoring
-- **Support tickets**: Created for issues requiring intervention
-
----
-
-## Appendix: State Machines
+## 6. Appendix: State Machines
 
 ### Delivery Status States
 
