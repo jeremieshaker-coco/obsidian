@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "research/THE_LIFE_OF_AN_ORDER.md",
+                "file": "research/PERSONAS_AND_USER_JOURNEYS.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "THE_LIFE_OF_AN_ORDER"
+              "title": "PERSONAS_AND_USER_JOURNEYS"
             }
           }
         ]
@@ -195,9 +195,13 @@
   },
   "active": "21b796371860b777",
   "lastOpenFiles": [
+    "research/DEVICE_API_RESEARCH_NOTES.md",
+    "research/THE_LIFE_OF_A_ROBOT.md",
+    "research/PERSONAS_AND_USER_JOURNEYS.md",
+    "research/THE_LIFE_OF_AN_ORDER.md",
+    "personal/2025-12-27.md",
     "personal/2025-12-23.md",
     "personal/2025-12-22.md",
-    "research/THE_LIFE_OF_AN_ORDER.md",
     "reference/Pinless Loading Flow.md",
     "reference/Robot Loading Overview.md",
     "reference/Lid Event Data Model.md",
@@ -209,7 +213,6 @@
     "reference/Prisma Client Generation in Monorepo.md",
     "proposals/Event Logging - Proposal.md",
     "savedchats/cursor_design_read_only_device_api.md",
-    "research/DEVICE_API_RESEARCH_NOTES.md",
     "savedchats",
     "Users/jeremieshaker",
     "Users",
@@ -223,9 +226,6 @@
     "Log-Driven OLAP Metrics - Implementation Plan 1.md",
     "proposals/Log-Driven OLAP Metrics - Business Proposal.md",
     "designs/Device API - Technical Design.md",
-    "tasks/Device API - Implementation Milestones.md",
-    "designs/Device API - Implementation Milestones.md",
-    "requirements/Device API - Product Requirements Document.md",
     "proposals",
     "requirements",
     "tasks",
