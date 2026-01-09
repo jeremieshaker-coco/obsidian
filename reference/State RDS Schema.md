@@ -8,7 +8,8 @@ tags:
 ---
 # State RDS Schema
 
-**Namespace:** `state_rds_public`
+**Namespace:** `state_rds_public`  
+**Schema File**: [`service/state/prisma/schema.prisma`](../../delivery-platform/service/state/prisma/schema.prisma)
 
 This schema is synced from the [[State Service]] RDS database. It tracks real-time robot state events, particularly lid operations and PIN entries for delivery loading and unloading.
 

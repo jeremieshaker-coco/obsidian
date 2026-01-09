@@ -1,91 +1,178 @@
-# Device API: Product Requirements Document
+# Functional Requirements
 
-# Problem Statement
+## 1. Physical Asset Management
 
-Multiple services independently process MQTT/IoT events from robots, leading to inconsistent device state across our platform. There is no single source of truth for robot state, making it difficult to:
+These requirements focus on the "Device as a machine" and support journeys related to hardware health, connectivity, and direct interaction.
 
-- Get accurate, up-to-date robot information
-- Debug issues when different services show different states
-- Provide useful monitoring information to Mission Control UI (data is currently scattered across multiple services)
-- Add new consumers (like MDS endpoints) without duplicating event processing logic
-- Ensure all services make decisions based on the same data
+- [P0] Real-time Physical State Ingestion & Retrieval:
+    
 
-## Current State
+- User Journeys: Support Pilot teleoperation and Engineering debugging.
+    
+- Requirement: Must ingest and expose raw telemetry (GPS, battery, heading), connectivity status (DriveU/MQTT), and hardware status messages.
+    
 
-### 1. Multiple Sources of Truth
+- [P0] Direct Hardware Interaction (Command API):
+    
 
-Different services maintain their own versions of robot state:
+- User Journeys: Customer retrieval of food, Merchant loading, and Pilot troubleshooting.
+    
+- Requirement: Provide RPCs to send commands to the robot (e.g., SendDeviceCommand for lid open/close, honk, or flash lights).
+    
 
-- **State Service**: Processes events and stores state transitions
-- **Operations Service**: Maintains business state in database + Redis cache
-- **Dispatch Engine**: Stores robot state in its own tables
-- **Fleet Service**: Stores robot state in DynamoDB
-- **MDS Service**: Queries Operations service for status (will migrate to Device API)
+- [P1] Software Lifecycle Management:
+    
 
-**Impact**: Services see different states for the same robot at the same time, leading to operational errors.
+- User Journeys: MRO Technician repairs and Engineering deployments.
+    
+- Requirement: Poll and aggregate AWS Greengrass V2 data, including installed software components, versions, and lifecycle states.
+    
 
-### 2. Inconsistent Data Freshness
+- [P1] Diagnostic & Health Reporting:
+    
 
-Services have different freshness guarantees:
+- User Journeys: Field Operator (FO) battery swaps and MRO Technician diagnostics.
+    
+- Requirement: Expose detailed component health (GPS, Camera, PCU, etc.) and historical telemetry for debugging.
+    
 
-- Some use Redis cache with 60-300 second TTLs
-- Some process events in real-time but may miss events if consumers fail
-- Some query databases that may be stale
+- [P1] Transient State Management (Unlock Pins):
+    
 
-**Impact**: Services make decisions based on outdated information, possibly causing incorrect assignments and failed deliveries.
+- User Journeys: Merchant loading (Magic Lid/PIN) and Customer food retrieval.
+    
+- Requirement: Provide RPCs to set, clear, and validate unlock PINs for the robot keypad.
+    
 
-### 3. Schema Inconsistencies
+## 2. Operational Fleet Management 
 
-Different services use different data structures for the same information:
+These requirements focus on the "Device as an operational asset" and support journeys involving deliveries and business logic.
 
-- Operation states use different enums (`'GROUNDED'` vs `RobotStateEventState` vs `RobotOperationState` )
-- Location fields vary (`latitude/longitude` vs `lat/lng`)
-- Battery data represented differently (`soc` vs `currentBatteryPercentage`)
+- [P0] Real-time "Business-Aware" Fleet View:
+    
 
-**Impact**: Integration bugs, mapping errors, and confusion about which fields to use.
+- User Journeys: Dispatch Operator fleet monitoring and General Manager operational review.
+    
+- Requirement: Aggregate the physical state from the Device API with operational data (Trip ID, Delivery ID, Merchant ID) into a single FleetDevice resource.
+    
 
-### 4. Mission Control UI Monitoring Gap
+- We should be able to sort/filter on the following fields: 
+    
 
-Mission Control UI needs comprehensive device information for monitoring and debugging, but currently must query multiple services and endpoints to get complete robot state:
+- Device name
+    
+- Online / Offline
+    
+- Has Cargo
+    
+- Location
+    
+- Batteries
+    
+- Components statuses
+    
 
-- Operations Service `/devices` endpoints for basic device info
-- Operations Service `/devices/state/latest` for state history
-- Operations Service `/devices/gps/batch` for geolocations
-- State Service for connectivity and state transitions
-- Fleet Service for deployment information
+- Component name
+    
+- State (healthy, degraded, failed)
+    
 
-**Impact**: Mission Control UI cannot efficiently display a unified view of robot state, making monitoring and debugging difficult. Engineers must manually correlate data from multiple sources when investigating issues.
+- RobotOperationState
+    
+- Trip ID
+    
+- Delivery ID
+    
+- Demand ID
+    
+- Merchant ID
+    
+- Pilot ID
+    
+- Provider Mapping (to map to Uber/DoorDash vehicle id)
+    
 
-## Requirements
+- [P0] Operational Lifecycle Orchestration:
+    
 
-### 1. Single Source of Truth
+- User Journeys: Pilot shift/trip management and Dispatch task assignment.
+    
+- Requirement: Provide RPCs for AssignTrip, UpdateTrip, and UnassignTrip to manage the robot's role in the delivery lifecycle.
+    
 
-A unified Device API that serves as the authoritative source for all robot/device state information. All services should query this API instead of processing events independently. This includes robot telemetry (location, battery, operation state), connectivity status (including DriveU remote control status), trip context, and deployment information.
+- [P0] ID Resolution & Partner Integration:
+    
 
-### 2. Consistent State
+- User Journeys: Partner Platform (Uber/DoorDash) delivery tracking and status updates.
+    
+- Requirement: Maintain and expose ProviderMapping to resolve internal serial numbers to external partner vehicle IDs.
+    
 
-All services should see the same state for the same robot at the same time (within acceptable freshness windows).
+- [P1] Enriched Business Event Publishing:
+    
 
-### 3. Standardized Schema
+- User Journeys: Integrations Service pushing status to DoorDash and Customer receiving arrival notifications.
+    
+- Requirement: Consume the Device API stream and publish enriched events such as TripStageChanged (e.g., Arrived at Pickup) to RabbitMQ.
+    
 
-A single, well-documented schema for device state that all consumers use, eliminating mapping inconsistencies.
+- [P1] Operational Flag Management:
+    
 
-### 4. Data Freshness Guarantees
+- User Journeys: Operations Support responding to stuck robots or Dispatch managing maintenance.
+    
+- Requirement: Allow setting and clearing of operational flags (e.g., needs_movement, needs_pickup) that affect robot dispatchability.
+    
 
-Clear freshness guarantees that meet or exceed current service expectations. No regression in data freshness.
+## 3. Analytics and Performance Tracking
 
-### 5. gRPC API
+These requirements support the Operations Analyst in maximizing fleet effectiveness.
 
-The API must be exposed via **gRPC** for internal service communication. This provides better performance, type safety, and streaming capabilities. The gRPC should be AIP compliant ([https://google.aip.dev/general](https://google.aip.dev/general)).
+- [P2] Unavailability & Failure Analysis:
+    
 
-### 6. Query Patterns Support
+- Requirement: The API must provide enough historical data (via GetTelemetry or RobotStateHistory) to categorize why robots were unavailable (e.g., Grounded, Low Battery, No Pilot).
+    
 
-The API must support:
+- [P2] Delivery Phase Performance:
+    
 
-- **Single device queries**: Get state for a specific robot by ID
-- **Bulk queries**: Get state for multiple robots efficiently
-- **Filtered queries**: Query robots by criteria (e.g., available robots, healthy robots, robots in a location)
+- Requirement: Must track timestamps for all state transitions (JITP, Load, In-Transit, Dropoff) to measure average delivery times and identify bottlenecks.
+    
 
-### 7. MDS Data Support
+# Non-functional requirements
 
-The API must provide all data needed by MDS endpoints with appropriate freshness constraints. The MDS Service will query the Device API to obtain this data and transform it to MDS format. The API must include fields necessary for MDS compliance (e.g., vehicle state, event information) and ensure data freshness meets MDS requirements.
+- [P0] Mission control only needs to hit the one API to retrieve data it needs for the devices page.
+    
+- [P0] The service should be able to handle the volume of events generated by 10,000 devices.  
+    10,000 devices x 6 heartbeats per min = 60,000qpm = 1,000qps
+    
+- [P0] The API should be available through gRPC and should follow Google AIP design guidelines.
+    
+- [P0] There should be zero downtime in the migration to this new API since these paths are all actively in use.
+    
+- [P0] It should be possible to incrementally migrate consumers of the device state to the new device API.
+    
+- [P0] Out of order events should be handled gracefully. 
+    
+
+- Most queue systems guarantee order within a topic, but currently the device’s state is published via multiple topics, which means events can arrive out-of-order (i.e.: heartbeat vs lid events).
+    
+
+- [P1] The Device Service’s database is the single source of truth for all device-specific metadata.
+    
+- [P1] We should be able to validate the new API against the current implementation to verify the correctness of the data.
+    
+
+- [P1] The device API should be agnostic of anything related to food deliveries. 
+    
+- [P1] All data exposed by the current Device Service should be exposed by the new API.
+    
+- [P1] All data exposed by the State Service should be exposed by the new API.
+    
+- [P1] All dependencies of existing device SQS queues (device-events-processing, device-state-processing) should be deprecated or replaced with the new API.
+    
+- [P1] All dependencies to the MQTT-to-Kafka Bridge service will be decommissioned.
+    
+
+**

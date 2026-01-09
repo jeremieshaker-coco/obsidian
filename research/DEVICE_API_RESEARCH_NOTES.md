@@ -241,6 +241,7 @@ The data structures for Greengrass objects are defined by the AWS SDK and aliase
 - **Role**: Raw event ingestion, normalization, and initial persistence.
 - **Persistence**: [`StateHistory`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/prisma/schema.prisma) (PostgreSQL), DriveU Status (DynamoDB).
 - **Outputs**: Publishes normalized events to RabbitMQ ([`IoT.Heartbeat`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts), [`Robots.StateChange`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)).
+- **`Robots.StateChange` Role**: Both **publishes** (on state machine transitions via [`StateTransitionSubscriber`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/state-machine/listeners/state-transition.subscriber.ts)) and **consumes** (to sync `needsMaintenance` flags set by other services via [`RobotStateChangeHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/robot-state.handler.ts)).
 
 **Processing Flow (Heartbeat Write Path)**:
 
@@ -290,6 +291,9 @@ model StateHistory {
 - **Role**: Applies business rules (maintenance toggles, operational readiness) to raw state.
 - **Persistence**: [`RobotStateHistory`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/prisma/schema.prisma) (PostgreSQL), Ephemeral Data (Redis). The Redis cache is managed by the [`RobotEphemeralDataService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robot-ephemeral-data.service.ts) and holds transient state like connectivity and component health.
 - **Outputs**: `RobotStateHistory` updates, Redis cache updates.
+- **`Robots.StateChange` Role**: The Operations Service is both the **largest publisher** and a **consumer** of this event:
+    - **Consumes**: Via [`RobotStateChangeHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts) to update its `RobotStateHistory` table.
+    - **Publishes** (12+ points): From [`RobotFleetManagementService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fleet-management/services/robot-fleet-management.service.ts) (deployments), [`RobotsService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robots.service.ts) (grounding), [`PilotTripsService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/trips/services/pilot-trips.service.ts) (trip updates), and [`FoTasksService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fo-tasks/fo-tasks.service.ts) (maintenance).
 
 **Processing Flow (State Change Write Path)**:
 
@@ -336,8 +340,9 @@ model RobotStateHistory {
 - **Role**: Fleet management and provider integrations (Uber).
 - **Data Sources**:
     - **Kafka ([`robot_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/robot_consumer.go))**: Consumes raw robot telemetry (GPS, Battery) directly.
-    - **RabbitMQ ([`legacy_robots_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/consumer.go))**: Consumes business events from Operations System (HasFood, NeedsMaintenance).
+    - **RabbitMQ ([`legacy_robots_consumer`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/consumer.go))**: Consumes business events from the TypeScript platform.
 - **Persistence**: [`fleet-robots`](https://github.com/cocorobotics/coco-services/blob/master/infra/configs/fleet/consumers/robot_consumer/values.yaml.tpl) (DynamoDB) - Aggregates telemetry + business state.
+- **`Robots.StateChange` Role**: **Consumes** via [`HandleRobotsStateChange`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state_change.go) to update DynamoDB with business state (`hasFood`, `needsMaintenance`, `operationState`, `tripType`, etc.). Also consumes [`Robots.State`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state.go) and [`Robots.Deployment`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_deployment.go) events.
 
 **Processing Flow**:
 
@@ -443,6 +448,7 @@ The Fleet Service exposes its data primarily through a **gRPC API** (and a corre
 - **Role**: Maintains a near real-time cache of available robots (`supply`) to make high-performance planning decisions without querying other services.
 - **Persistence**: `Resource` table (PostgreSQL) with an in-memory/Redis cache. Robot state is stored in a `jsonb` column, using the `LegacyRobot` type as its schema.
 - **Outputs**: An up-to-date `Resource` table and a populated cache that the `SupplyService` can read from.
+- **`Robots.StateChange` Role**: **Consumes** via [`RobotStageChangeHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts), which transforms the event into an internal `DispatchEngine.SupplyEvent` to update the planner's robot supply cache.
 
 **Processing Flow (Event Cache Write Path)**:
 The Dispatch Engine uses a two-step internal event queue to process data. This decouples the initial event ingestion from the business logic that updates the supply cache. The repository layer is responsible for invalidating the cache upon writes to ensure data consistency.
@@ -500,6 +506,11 @@ export type LegacyRobot = {
 ```
 
 ([`LegacyRobot` source](https://github.com/cocorobotics/delivery-platform/blob/main/lib/types/dispatch-engine/planner.ts))
+
+### 3.5 Deliveries Service: Delivery Lifecycle Management
+
+- **Role**: Manages delivery lifecycle and provider-specific logic.
+- **`Robots.StateChange` Role**: **Publishes** during delivery lifecycle transitions via [`RobotProviderService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/providers/robot/robot.service.ts) and [`DeliveryService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/delivery/service/delivery.service.ts) to update `hasFood` and other flags as deliveries progress.
 
 ---
 
@@ -708,3 +719,475 @@ This flow is broken down into three main phases:
 3.  **Consumption in `Deliveries` Service**:
     *   The `Deliveries` service consumes the `LidCycle.Complete` event in its [`deviceless.handler.ts`](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/deviceless/deviceless.handler.ts).
     *   This handler contains the business logic to update the state of the associated delivery in the **Deliveries PostgreSQL database**, marking it as ready for loading or completed.
+
+---
+
+# 5. RabbitMQ Event Reference
+
+This section provides a comprehensive map of all RabbitMQ events relevant to device/robot state, showing who publishes each event, who consumes it, and for what purpose.
+
+	## 5.1 Robot Telemetry & State Events
+	
+	| Event | Publisher(s) | Consumer(s) | Purpose |
+	|-------|--------------|-------------|---------|
+	| [`IoT.Heartbeat`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** ([`IotStreamerService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/iot-streamer/iot-streamer.service.ts)) - On every robot heartbeat | **Operations Service** ([`IotHeartbeatHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/handlers/iot-heartbeat-handler.ts)) - Update Redis cache, check geofences<br/>**Dispatch Engine** ([`IotHeartbeatHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/iot-heartbeat.handler.ts)) - Update supply cache with location/battery | Real-time robot telemetry (GPS, battery, health) fan-out |
+	| [`Robots.StateChange`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** ([`StateTransitionSubscriber`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/state-machine/listeners/state-transition.subscriber.ts)) - On state machine transitions<br/>**Operations Service** (12+ points) - Deployments, grounding, trips, maintenance<br/>**Deliveries Service** ([`RobotProviderService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/providers/robot/robot.service.ts)) - hasFood updates | **State Service** ([`RobotStateChangeHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/robot-state.handler.ts)) - Sync needsMaintenance<br/>**Operations Service** ([`RobotStateChangeHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts)) - Update RobotStateHistory<br/>**Dispatch Engine** ([`RobotStageChangeHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts)) - Update supply cache<br/>**Fleet Service** ([`HandleRobotsStateChange`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state_change.go)) - Update DynamoDB for Uber | Business state changes (operationState, hasFood, needsMaintenance, tripType) |
+	| [`Robots.Deployment`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Operations Service** ([`RobotDeploymentEventsPublisherService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fleet-management/publishers/robot-state-change-events-publisher.service.ts)) - When deploying robots | **Dispatch Engine** ([`RobotEventsHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts)) - Add to supply<br/>**Fleet Service** ([`HandleRobotsDeployment`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_deployment.go)) - Update DynamoDB | Robot deployment to service area |
+	| [`Robots.State`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Dispatch Engine** ([`SupplyService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/supply/service/supply.service.ts)) - On supply changes | **Fleet Service** ([`HandleRobotsState`](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state.go)) - Update DynamoDB | Full robot state snapshot for external providers |
+	| [`IoT.HealthStateChanged`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** - When robot health changes | **Operations Service** - Ground robot if unhealthy, create FO tasks | Robot health status transitions (healthy ↔ unhealthy) |
+	
+	## 5.2 Connectivity Events
+	
+	| Event | Publisher(s) | Consumer(s) | Purpose |
+	|-------|--------------|-------------|---------|
+	| [`State.ConnectivityRawStatusChanged`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** ([`ConnectivityEventHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/connectivity/connectivity-event.handler.ts)) - On DriveU webhook | **State Service** ([`DriveuStatusHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/driveu/driveu-status.handler.ts)) - Save to DynamoDB | Raw DriveU teleoperation connectivity updates |
+	| [`State.ConnectivityOverallChanged`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** - On connectivity state change | **Operations Service** ([`RobotStateChangeHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts)) - Update online/offline status | Aggregated connectivity status (online/offline) |
+	
+	## 5.3 State Machine Events
+	
+	| Event | Publisher(s) | Consumer(s) | Purpose |
+	|-------|--------------|-------------|---------|
+	| [`State.TransitionCompleted`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** ([`StateTransitionSubscriber`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/state-machine/listeners/state-transition.subscriber.ts)) - On successful transition | **Operations Service** - Update trip/task state | Robot successfully transitioned (e.g., PARKED → ON_TRIP) |
+	| [`State.TransitionFailed`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** ([`StateTransitionSubscriber`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/state-machine/listeners/state-transition.subscriber.ts)) - On failed transition | **Operations Service** - Handle failure, alert | Robot transition rejected (invalid state change) |
+	
+	## 5.4 Lid Cycle Events
+	
+	| Event | Publisher(s) | Consumer(s) | Purpose |
+	|-------|--------------|-------------|---------|
+	| [`Robots.PinEntry`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** ([`IotStreamerService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/iot-streamer/iot-streamer.service.ts)) - On PIN_ENTRY_* event | **Deliveries Service** - Validate PIN, update attempt | Merchant/customer entered PIN on robot keypad |
+	| [`Robots.LidOpen`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** - On LID_OPENED event | **Deliveries Service** - Start loading timer | Robot lid was opened (for loading/unloading) |
+	| [`Robots.LidClose`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** - On LID_CLOSED event | **Deliveries Service** ([`RobotHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/providers/robot/robot.handler.ts)) - loadRobot(), update hasFood | Robot lid was closed (loading complete) |
+	| [`LidCycle.Init`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** ([`LidCycleService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/lid-cycle/lid-cycle.service.ts)) - On lid open | **Deliveries Service** - Track loading started | Lid cycle initiated (lid opened for loading/unloading) |
+	| [`LidCycle.Complete`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** ([`LidCycleService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/lid-cycle/lid-cycle.service.ts)) - On lid close | **Deliveries Service** ([`DevicelessHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/deviceless/deviceless.handler.ts)) - Mark loaded/delivered | Lid cycle completed successfully |
+	| [`LidCycle.Timeout`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **State Service** ([`LidCycleTimeoutWorker`](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/lid-cycle/lid-cycle-timeout.worker.ts)) - Lid open too long | **Deliveries Service** - Alert, may cancel | Lid open exceeded timeout threshold |
+	
+	## 5.5 Delivery & Order Events
+	
+	| Event | Publisher(s) | Consumer(s) | Purpose |
+	|-------|--------------|-------------|---------|
+	| [`Deliveries.DeliveryEvent`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Deliveries Service** - On delivery state change | **Integrations Service** ([`DoorDashUpdateService`](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/doordash/v3/doordash-update.service.ts)) - Push to DoorDash<br/>**Operations Service** - Trigger FO tasks | Delivery status changed (InTransit, AtDestination, Completed, etc.) |
+	| [`Deliveries.AttemptUpdated`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Deliveries Service** - On attempt state change | **Operations Service** - Update trip state<br/>**Dispatch Engine** - Update demand status | Attempt status transitioned (AtPickup, LoadedWithPilot, InTransit, etc.) |
+	| [`Deliveries.ProviderEtaUpdated`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Dispatch Engine** - On ETA recalculation | **Integrations Service** - Push ETA to partners | Updated ETA for delivery (for partner apps) |
+	| [`Deliveries.RescueInitiated`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Deliveries Service** - When rescue flow starts | **Integrations Service** - Notify partner of rescue<br/>**Operations Service** - Create FO rescue task | Robot failed mid-delivery, rescue courier assigned |
+	
+	## 5.6 Operations & Trip Events
+	
+	| Event | Publisher(s) | Consumer(s) | Purpose |
+	|-------|--------------|-------------|---------|
+	| [`Operations.TripCreated`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Operations Service** - When trip is created | **Dispatch Engine** - Track active trips<br/>**Trip Monitor** - Start monitoring | New trip created (JITP, Delivery, Return, Deployment) |
+	| [`Operations.TripTransitioned`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Operations Service** - On trip state change | **Deliveries Service** - Update attempt status<br/>**Dispatch Engine** - Update demand<br/>**Integrations Service** - Push to partners | Trip status changed (SCHEDULED → IN_TRANSIT → COMPLETED) |
+	| [`Operations.TripRescueRequired`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Operations Service** - Robot failed with food | **Deliveries Service** - Initiate rescue flow | Robot needs rescue (unhealthy with hasFood=true) |
+	| [`Operations.FoTaskCreated`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Operations Service** - When FO task created | **FO App** (via push) - Notify field operator | New field operations task (BATTERY_SWAP, UNSTUCK_BOT, etc.) |
+	
+	## 5.7 Dispatch Engine Internal Events
+	
+	| Event | Publisher(s) | Consumer(s) | Purpose |
+	|-------|--------------|-------------|---------|
+	| [`DispatchEngine.SupplyEvent`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Dispatch Engine** ([`IotHeartbeatHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/iot-heartbeat.handler.ts), [`RobotStageChangeHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts)) - Transform external events | **Dispatch Engine** ([`SupplyEventHandler`](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/supply/handlers/supply-event.handler.ts)) - Update Resource table | Internal event for supply cache updates (decouples ingestion from processing) |
+	| [`DispatchEngine.DemandEvent`](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts) | **Dispatch Engine** - On demand changes | **Dispatch Engine** - Internal planner coordination | Demand created/updated/cancelled |
+	
+	## 5.8 Event Flow Summary Diagram
+	
+	```mermaid
+	graph LR
+	    subgraph "Event Sources"
+	        Robot[Robot MQTT]
+	        DriveU[DriveU Webhook]
+	        API[API Calls]
+	    end
+	    
+	    subgraph "State Service (Publisher)"
+	        SS[State Service]
+	    end
+	    
+	    subgraph "RabbitMQ Events"
+	        HB[IoT.Heartbeat]
+	        SC[Robots.StateChange]
+	        LC[LidCycle.*]
+	        CONN[State.Connectivity*]
+	    end
+	    
+	    subgraph "Consumers"
+	        OPS[Operations Service]
+	        DE[Dispatch Engine]
+	        DEL[Deliveries Service]
+	        FLEET[Fleet Service]
+	        INT[Integrations Service]
+	    end
+	    
+	    Robot --> SS
+	    DriveU --> SS
+	    SS --> HB
+	    SS --> SC
+	    SS --> LC
+	    SS --> CONN
+	    
+	    HB --> OPS
+	    HB --> DE
+	    SC --> OPS
+	    SC --> DE
+	    SC --> FLEET
+	    LC --> DEL
+	    CONN --> OPS
+	    
+	    OPS -->|Robots.StateChange| SC
+	    OPS -->|Deliveries.DeliveryEvent| INT
+	    DEL -->|Robots.StateChange| SC
+	```
+	
+	## 5.9 Key Event Patterns
+	
+	1. **Fan-out Pattern**: `IoT.Heartbeat` and `Robots.StateChange` are consumed by multiple services, each maintaining their own view of robot state.
+	
+	2. **Event Transformation**: The Dispatch Engine consumes external events (`IoT.Heartbeat`, `Robots.StateChange`) and transforms them into internal `DispatchEngine.SupplyEvent` for processing.
+	
+	3. **Bidirectional Publishing**: State Service and Operations Service both publish AND consume `Robots.StateChange`, enabling cross-service state synchronization.
+	
+	4. **Cascade Pattern**: Robot heartbeat → `IoT.Heartbeat` → Operations updates → `Deliveries.DeliveryEvent` → Integrations pushes to partners.
+	
+	5. **Eventual Consistency**: Each consumer maintains its own database/cache, creating an eventually consistent system across PostgreSQL (State, Operations, Dispatch), DynamoDB (Fleet), and Redis (Operations, Fleet, Dispatch).
+
+
+# Events
+
+```mermaid
+flowchart LR
+
+%% Node Styling
+
+classDef nodeStyle fill:#fff,stroke:#000,stroke-width:1px,color:#000;
+
+classDef labelStyle fill:#e5e7eb,stroke:none,color:#000,font-size:11px;
+
+  
+
+%% Subgraph 1: Event Sources
+
+subgraph ES ["Event Sources"]
+
+direction TB
+
+DriveU["DriveU Webhook"]:::nodeStyle
+
+RobotMQTT["Robot MQTT"]:::nodeStyle
+
+APICalls["API Calls"]:::nodeStyle
+
+end
+
+  
+
+%% Subgraph 2: State Service
+
+subgraph SSP ["State Service (Publisher)"]
+
+StateService["State Service"]:::nodeStyle
+
+end
+
+  
+
+%% Subgraph 3: RabbitMQ Events
+
+subgraph RMQ ["RabbitMQ Events"]
+
+LidCycle["LidCycle.*"]:::nodeStyle
+
+Heartbeat["IoT.Heartbeat"]:::nodeStyle
+
+Connectivity["State.Connectivity*"]:::nodeStyle
+
+RobotsState["Robots.StateChange"]:::nodeStyle
+
+end
+
+  
+
+%% Subgraph 4: Consumers
+
+subgraph CONS ["Consumers"]
+
+Deliveries["Deliveries Service"]:::nodeStyle
+
+Operations["Operations Service"]:::nodeStyle
+
+Integrations["Integrations Service"]:::nodeStyle
+
+Dispatch["Dispatch Engine"]:::nodeStyle
+
+Fleet["Fleet Service"]:::nodeStyle
+
+end
+
+  
+
+%% Connections: Event Sources -> State Service
+
+DriveU --> StateService
+
+RobotMQTT --> StateService
+
+  
+
+%% Connections: State Service -> RabbitMQ
+
+StateService --> LidCycle
+
+StateService --> Heartbeat
+
+StateService --> Connectivity
+
+StateService --> RobotsState
+
+  
+
+%% Connections: RabbitMQ -> Consumers
+
+LidCycle --> Deliveries
+
+LidCycle --> Operations
+
+Heartbeat --> Operations
+
+Connectivity --> Operations
+
+  
+
+RobotsState --> Dispatch
+
+RobotsState --> Fleet
+
+%% Labelled connections involving Robots.StateChange
+
+RobotsState -->|Robots.StateChange| Deliveries
+
+RobotsState -->|Robots.StateChange| Operations
+
+  
+
+%% Connections: Service to Service
+
+Deliveries --> Operations
+
+Operations -->|Deliveries.DeliveryEvent| Integrations
+
+  
+
+%% Styling for labels to look like the gray boxes in the original
+
+linkStyle 10,11,13 stroke-width:1px,fill:none,stroke:black;
+```
+
+## Key Event Patterns
+
+1. Fan-out Pattern: IoT.Heartbeat and Robots.StateChange are consumed by multiple services, each maintaining their own view of robot state. 
+    
+2. Event Transformation: The Dispatch Engine consumes external events (IoT.Heartbeat, Robots.StateChange) and transforms them into internal DispatchEngine. SupplyEvent for processing. 
+    
+3. Bidirectional Publishing: State Service and Operations Service both publish AND consume Robots.StateChange, enabling cross-service state synchronization. 
+    
+4. Cascade Pattern: Robot heartbeat → IoT.Heartbeat → Operations updates → Deliveries.DeliveryEvent → Integrations pushes to partners. 
+    
+5. Eventual Consistency: Each consumer maintains its own database/cache, creating an eventually consistent system across PostgreSQL (State, Operations, Dispatch), DynamoDB (Fleet), and Redis (Operations, Fleet, Dispatch).
+    
+
+  
+
+6. ## Robot Telemetry & State Events
+    
+
+|Event|Publisher(s)|Consumer(s)|Purpose|
+|---|---|---|---|
+|[IoT.Heartbeat](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service ([IotStreamerService](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/iot-streamer/iot-streamer.service.ts)) - On every robot heartbeat|Operations Service ([IotHeartbeatHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/handlers/iot-heartbeat-handler.ts)) - Update Redis cache, check geofences<br><br>Dispatch Engine ([IotHeartbeatHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/iot-heartbeat.handler.ts)) - Update supply cache with location/battery|Real-time robot telemetry (GPS, battery, health) fan-out|
+|[Robots.StateChange](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service ([StateTransitionSubscriber](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/state-machine/listeners/state-transition.subscriber.ts)) - On state machine transitions<br><br>Operations Service (12+ points) - Deployments, grounding, trips, maintenance<br><br>Deliveries Service ([RobotProviderService](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/providers/robot/robot.service.ts)) - hasFood updates|State Service ([RobotStateChangeHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/robot-state.handler.ts)) - Sync needsMaintenance<br><br>Operations Service ([RobotStateChangeHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts)) - Update RobotStateHistory<br><br>Dispatch Engine ([RobotStageChangeHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts)) - Update supply cache<br><br>Fleet Service ([HandleRobotsStateChange](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state_change.go)) - Update DynamoDB for Uber|Business state changes (operationState, hasFood, needsMaintenance, needsMovement, attemptCancellationReason, tripType, undergoingMaintenance, needsPickup)|
+|[Robots.Deployment](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Operations Service ([RobotDeploymentEventsPublisherService](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fleet-management/publishers/robot-state-change-events-publisher.service.ts)) - When deploying robots|Dispatch Engine ([RobotEventsHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts)) - Add to supply<br><br>Fleet Service ([HandleRobotsDeployment](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_deployment.go)) - Update DynamoDB|Robot deployment to service area|
+|[Robots.State](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Dispatch Engine ([SupplyService](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/supply/service/supply.service.ts)) - On supply changes|Fleet Service ([HandleRobotsState](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state.go)) - Update DynamoDB|Full robot state snapshot for external providers|
+|[IoT.HealthStateChanged](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service - When robot health changes|Operations Service - Ground robot if unhealthy, create FO tasks|Robot health status transitions (healthy ↔ unhealthy)|
+
+2. ## Connectivity Events
+    
+
+|Event|Publisher(s)|Consumer(s)|Purpose|
+|---|---|---|---|
+|[State.ConnectivityRawStatusChanged](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service ([ConnectivityEventHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/connectivity/connectivity-event.handler.ts)) - On DriveU webhook|State Service ([DriveuStatusHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/driveu/driveu-status.handler.ts)) - Save to DynamoDB|Raw DriveU teleoperation connectivity updates|
+|[State.ConnectivityOverallChanged](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service - On connectivity state change|Operations Service ([RobotStateChangeHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts)) - Update online/offline status|Aggregated connectivity status (online/offline)|
+
+3. ## State Machine Events
+    
+
+|Event|Publisher(s)|Consumer(s)|Purpose|
+|---|---|---|---|
+|[State.TransitionCompleted](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service ([StateTransitionSubscriber](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/state-machine/listeners/state-transition.subscriber.ts)) - On successful transition|Operations Service - Update trip/task state|Robot successfully transitioned (e.g., PARKED → ON_TRIP)|
+|[State.TransitionFailed](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service ([StateTransitionSubscriber](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/state-machine/listeners/state-transition.subscriber.ts)) - On failed transition|Operations Service - Handle failure, alert|Robot transition rejected (invalid state change)|
+
+4. ## Lid Cycle Events
+    
+
+|Event|Publisher(s)|Consumer(s)|Purpose|
+|---|---|---|---|
+|[Robots.PinEntry](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service ([IotStreamerService](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/iot-streamer/iot-streamer.service.ts)) - On PIN_ENTRY_* event|Deliveries Service - Validate PIN, update attempt|Merchant/customer entered PIN on robot keypad|
+|[Robots.LidOpen](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service - On LID_OPENED event|Deliveries Service - Start loading timer|Robot lid was opened (for loading/unloading)|
+|[Robots.LidClose](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service - On LID_CLOSED event|Deliveries Service ([RobotHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/providers/robot/robot.handler.ts)) - loadRobot(), update hasFood|Robot lid was closed (loading complete)|
+|[LidCycle.Init](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service ([LidCycleService](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/lid-cycle/lid-cycle.service.ts)) - On lid open|Deliveries Service - Track loading started|Lid cycle initiated (lid opened for loading/unloading)|
+|[LidCycle.Complete](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service ([LidCycleService](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/lid-cycle/lid-cycle.service.ts)) - On lid close|Deliveries Service ([DevicelessHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/deviceless/deviceless.handler.ts)) - Mark loaded/delivered|Lid cycle completed successfully|
+|[LidCycle.Timeout](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|State Service ([LidCycleTimeoutWorker](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/lid-cycle/lid-cycle-timeout.worker.ts)) - Lid open too long|Deliveries Service - Alert, may cancel|Lid open exceeded timeout threshold|
+
+5. ## Delivery & Order Events
+    
+
+|Event|Publisher(s)|Consumer(s)|Purpose|
+|---|---|---|---|
+|[Deliveries.DeliveryEvent](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Deliveries Service - On delivery state change|Integrations Service ([DoorDashUpdateService](https://github.com/cocorobotics/delivery-platform/blob/main/service/integrations/src/doordash/v3/doordash-update.service.ts)) - Push to DoorDash<br><br>Operations Service - Trigger FO tasks|Delivery status changed (InTransit, AtDestination, Completed, etc.)|
+|[Deliveries.AttemptUpdated](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Deliveries Service - On attempt state change|Operations Service - Update trip state<br><br>Dispatch Engine - Update demand status|Attempt status transitioned (AtPickup, LoadedWithPilot, InTransit, etc.)|
+|[Deliveries.ProviderEtaUpdated](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Dispatch Engine - On ETA recalculation|Integrations Service - Push ETA to partners|Updated ETA for delivery (for partner apps)|
+|[Deliveries.RescueInitiated](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Deliveries Service - When rescue flow starts|Integrations Service - Notify partner of rescue<br><br>Operations Service - Create FO rescue task|Robot failed mid-delivery, rescue courier assigned|
+
+6. ## Operations & Trip Events
+    
+
+|Event|Publisher(s)|Consumer(s)|Purpose|
+|---|---|---|---|
+|[Operations.TripCreated](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Operations Service - When trip is created|Dispatch Engine - Track active trips<br><br>Trip Monitor - Start monitoring|New trip created (JITP, Delivery, Return, Deployment)|
+|[Operations.TripTransitioned](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Operations Service - On trip state change|Deliveries Service - Update attempt status<br><br>Dispatch Engine - Update demand<br><br>Integrations Service - Push to partners|Trip status changed (SCHEDULED → IN_TRANSIT → COMPLETED)|
+|[Operations.TripRescueRequired](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Operations Service - Robot failed with food|Deliveries Service - Initiate rescue flow|Robot needs rescue (unhealthy with hasFood=true)|
+|[Operations.FoTaskCreated](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Operations Service - When FO task created|FO App (via push) - Notify field operator|New field operations task (BATTERY_SWAP, UNSTUCK_BOT, etc.)|
+
+7. ## Dispatch Engine Internal Events
+    
+
+|Event|Publisher(s)|Consumer(s)|Purpose|
+|---|---|---|---|
+|[DispatchEngine.SupplyEvent](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Dispatch Engine ([IotHeartbeatHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/iot-heartbeat.handler.ts), [RobotStageChangeHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts)) - Transform external events|Dispatch Engine ([SupplyEventHandler](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/supply/handlers/supply-event.handler.ts)) - Update Resource table|Internal event for supply cache updates (decouples ingestion from processing)|
+|[DispatchEngine.DemandEvent](https://github.com/cocorobotics/delivery-platform/blob/main/lib/common/src/exchanges/names.ts)|Dispatch Engine - On demand changes|Dispatch Engine - Internal planner coordination|Demand created/updated/cancelled|
+
+## Robots.StateChange Event Map
+
+### Publishers
+
+|Service|GitHub Link|Trigger / Purpose|
+|---|---|---|
+|State Service|[state-transition.subscriber.ts:66-79](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/state-machine/listeners/state-transition.subscriber.ts#L66-L79)|Publishes when robot state machine transitions occur (GROUNDED, OFF_DUTY, ON_TRIP, PARKED). Also sets needsMaintenance=true when entering GROUNDED state and needsMaintenance=false when leaving it.|
+|Operations Service|[robots.service.ts:825-829](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robots.service.ts#L825-L829)|When a robot is grounded due to assistance request|
+|Operations Service|[robots.service.ts:849-853](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/services/robots.service.ts#L849-L853)|When a robot is grounded (general case)|
+|Operations Service|[robot-fleet-management.service.ts:121-126](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fleet-management/services/robot-fleet-management.service.ts#L121-L126)|When a robot is undeployed (OFF_DUTY)|
+|Operations Service|[robot-fleet-management.service.ts:331-336](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fleet-management/services/robot-fleet-management.service.ts#L331-L336)|When robots are deployed to parking lot (PARKED)|
+|Operations Service|[pilot-trips.service.ts:225-230](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/trips/services/pilot-trips.service.ts#L225-L230)|When a pilot trip starts (ON_TRIP, hasFood, needsMovement)|
+|Operations Service|[pilot-trips.service.ts:168](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/trips/services/pilot-trips.service.ts#L168)|When trip is cancelled/parked after assistance request|
+|Operations Service|[pilot-trips.service.ts:260-265](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/trips/services/pilot-trips.service.ts#L260-L265)|When resuming a trip (ON_TRIP, needsMovement)|
+|Operations Service|[pilot-trips.repository.ts:659-664](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/trips/repositories/pilot-trips.repository.ts#L659-L664)|When trip is updated (ON_TRIP, needsMovement, tripType)|
+|Operations Service|[pilot-trips.publisher.ts:137-142](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/trips/publishers/pilot-trips.publisher.ts#L137-L142)|When pilot trip completes (PARKED, hasFood=false)|
+|Operations Service|[pilot-trips.publisher.ts:151-156](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/trips/publishers/pilot-trips.publisher.ts#L151-L156)|When pilot trip is cancelled (PARKED)|
+|Operations Service|[fo-tasks.service.ts:313-316](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fo-tasks/fo-tasks.service.ts#L313-L316)|When FO arrives at bot for maintenance (undergoingMaintenance=true)|
+|Operations Service|[fo-tasks.service.ts:176-180](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fo-tasks/fo-tasks.service.ts#L176-L180)|When maintenance tasks are scheduled/cancelled (sets needsMaintenance, needsPickup)|
+|Operations Service|[delivery.handlers.ts:64](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fo-tasks/handlers/delivery.handlers.ts#L64)|When delivery terminates, updates needsMaintenance based on pending tasks|
+|Operations Service|[delivery.handlers.ts:113](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/fo-tasks/handlers/delivery.handlers.ts#L113)|When delivery completes, updates needsMaintenance based on pending tasks|
+|Deliveries Service|[robot.service.ts:565-572](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/providers/robot/robot.service.ts#L565-L572)|When robot is loaded with food (hasFood=true, needsMovement=true, tripType=DELIVERY, ON_TRIP)|
+|Deliveries Service|[delivery.service.ts:1384-1388](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/src/modules/delivery/service/delivery.service.ts#L1384-L1388)|When rescue attempt fails (hasFood=false)|
+
+### Subscribers
+
+|Service|GitHub Link|Purpose|
+|---|---|---|
+|State Service|[robot-state.handler.ts:18-29](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/src/state/robot-state.handler.ts#L18-L29)|Syncs needsMaintenance flag from other services into State Service's robot state|
+|Operations Service|[robot-state-change-handler.ts:52-68](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts#L52-L68)|Updates robot state history in Operations DB with all operational state fields (needsMovement, hasFood, tripType, operationState, needsMaintenance, needsPickup, undergoingMaintenance, driveable)|
+|Dispatch Engine|[robot-stage-change.handler.ts:100-143](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts#L100-L143)|Transforms external Robots.StateChange event into internal DispatchEngine.SupplyEvent to update the dispatch planner's robot supply cache|
+
+  
+
+# Tables
+
+### Dispatch Engine Service (delivery-platform/service/dispatch-engine)
+
+|Table Name|Description|
+|---|---|
+|robots|Core robot state for dispatch (location, battery, health, scheduled demands)|
+|robot_plans|Robot scheduling plans for demand fulfillment|
+
+### Operations Service (delivery-platform/service/operations)
+
+|Table Name|Description|
+|---|---|
+|Robot|Core robot entity (serial, display name, relationships)|
+|RobotStateHistory|Tracks robot operational state changes (ON_TRIP, PARKED, GROUNDED, etc.)|
+|RobotDeployment|Robot deployment history to locations|
+|RobotCheckInHistory|Field operator check-in/check-out records for robots|
+
+### Deliveries Service (delivery-platform/service/deliveries)
+
+|Table Name|Description|
+|---|---|
+|robot_trips|Robot trip records (deprecated - migrated to other tables)|
+|robot_trip_history|Historical robot trip status changes|
+|robot_quotes|Robot delivery quotes|
+|RobotDelivery / RobotDeliveryHistory|Early delivery models (deprecated)|
+
+### State Service (delivery-platform/service/state)
+
+|Table Name|Description|
+|---|---|
+|StateHistory|Robot state machine transitions (keyed by serial)|
+|Connectivity / ConnectivityHistory|Robot connectivity status (IoT, DriveU)|
+|LidCycle / LidCycleEventHistory|Robot lid open/close cycles|
+
+  
+
+### Config Service (coco-services/config)
+
+|Table Name|Description|
+|---|---|
+|robot_location|Physical locations where robots operate (parking lots, hubs)|
+|robot_location_tag|Tags associated with robot locations|
+
+  
+
+---
+
+## DynamoDB Tables (Fleet Service)
+
+### Fleet Service (coco-services/fleet + coco-infra)
+
+|Table Name|Description|
+|---|---|
+|fleet-robots|Primary robot telemetry and state storage|
+|fleet-legacy-robot-updates|Legacy robot update events|
+|fleet-robot-heartbeats|Robot heartbeat records|
+|fleet-virtual-robots|Virtual robot mappings for providers|
+|uber-robot-state-updates|Uber-specific robot state sync|
+
+  
+
+---
+
+## Summary by Data Domain
+
+|Definition|Table|Service|Description|
+|---|---|---|---|
+|[schema.prisma:212](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/prisma/schema.prisma#L212)|Robot|Operations|Registry / Maintenance Tasks|
+|[dynamodb.tf:244](https://github.com/cocorobotics/coco-infra/blob/main/environments/prod/applications/us-west-2/fleet/service/dynamodb.tf#L244)|fleet-robots|Fleet|Registry|
+|[schema.prisma:19](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/prisma/schema.prisma#L19)|StateHistory|State|State transitions|
+|[schema.sql:36](https://github.com/cocorobotics/coco-services/blob/master/config/sqitch/deploy/schema.sql#L36)|robot_location|Config|Configuration for locations where robots can be deployed/undeployed|
+|[schema.sql:16](https://github.com/cocorobotics/coco-services/blob/master/config/sqitch/deploy/schema.sql#L16)|robot_location_tag|Config|Same|
+|[schema.prisma:349](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/prisma/schema.prisma#L349)|RobotDeployment|Operations|Tracking robots’ deployment state|
+|[schema.prisma:370](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/prisma/schema.prisma#L370)|RobotCheckInHistory|Operations|Tracking robots’ check in into MROs|
+|[migration.sql:204](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/prisma/migrations/20211217210247_refactor_models_add_olo_configs/migration.sql#L204)|robot_trips|Deliveries||
+|[migration.sql:215](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/prisma/migrations/20211217210247_refactor_models_add_olo_configs/migration.sql#L215)|robot_trip_history|Deliveries||
+|[migration.sql:2](https://github.com/cocorobotics/delivery-platform/blob/main/service/deliveries/prisma/migrations/20220812100048_store_robot_quotes/migration.sql#L2)|robot_quotes|Deliveries||
+|[schema.prisma:136](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/prisma/schema.prisma#L136)|robot_plans|Dispatch Engine|Planning & Supply|
+|[schema.prisma:46](https://github.com/cocorobotics/delivery-platform/blob/main/service/dispatch-engine/prisma/schema.prisma#L46)|robots|Dispatch Engine|Planning & Supply|
+|[schema.prisma:230](https://github.com/cocorobotics/delivery-platform/blob/main/service/operations/prisma/schema.prisma#L230)|RobotStateHistory|Operations|History of maintenance|
+|[schema.prisma:62](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/prisma/schema.prisma#L62)|Connectivity|State||
+|[schema.prisma:74](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/prisma/schema.prisma#L74)|ConnectivityHistory|State||
+|[schema.prisma:107](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/prisma/schema.prisma#L107)|LidCycle|State||
+|[schema.prisma:121](https://github.com/cocorobotics/delivery-platform/blob/main/service/state/prisma/schema.prisma#L121)|LidCycleEventHistory|State||
+|[dynamodb.tf:103](https://github.com/cocorobotics/coco-infra/blob/main/environments/prod/applications/us-west-2/fleet/service/dynamodb.tf#L103)|fleet-robot-heartbeats|Fleet||
+|[dynamodb.tf:1](https://github.com/cocorobotics/coco-infra/blob/main/environments/prod/applications/us-west-2/fleet/service/dynamodb.tf#L1)|fleet-legacy-robot-updates|Fleet||
+|[dynamodb.tf:198](https://github.com/cocorobotics/coco-infra/blob/main/environments/prod/applications/us-west-2/fleet/service/dynamodb.tf#L198)|fleet-virtual-robots|Fleet||
+|[dynamodb.tf:126](https://github.com/cocorobotics/coco-infra/blob/main/environments/prod/applications/us-west-2/fleet/service/dynamodb.tf#L126)|uber-robot-state-updates|Fleet||
+|[schema.prisma:688](https://github.com/cocorobotics/delivery-platform/blob/9e006cda24b680a7d1f14ee6d32af0d061aea6b0/service/operations/prisma/schema.prisma#L668)|FoTaskModel|Operations|Manages field tasks (e.g., BATTERY_SWAP, UNSTUCK_BOT).|
+|[schema.prisma:144](https://github.com/cocorobotics/delivery-platform/blob/3f79e499b43e2ad00a9a4c8ce2da81eb72d76d78/service/operations/prisma/schema.prisma#L144)|FoAssistanceRequestModel|Operations|Tracks help requests triggered by robot failures during trips.|
+|[schema.prisma:144](https://github.com/cocorobotics/delivery-platform/blob/3f79e499b43e2ad00a9a4c8ce2da81eb72d76d78/service/state/prisma/schema.prisma#L144)|PinEntryEvent|State|Logs PIN entry attempts on physical robot keypads.|
+|||||
+
+  
+  
+**
