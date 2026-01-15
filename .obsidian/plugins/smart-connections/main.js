@@ -30836,7 +30836,7 @@ var ScChatHistoryModal = class extends import_obsidian33.FuzzySuggestModal {
   }
   // if not UNTITLED, remove date after last em dash
   getItemText(item) {
-    return item.indexOf("UNTITLED") === -1 ? item.replace(/—[^—]*$/, "") : item;
+    return item.indexOf("UNTITLED") === -1 ? item.replace(/-[^-]*$/, "") : item;
   }
   // onChooseItem(session) { this.view.open_chat(session); }
   onChooseItem(thread_name) {

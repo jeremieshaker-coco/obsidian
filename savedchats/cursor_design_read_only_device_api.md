@@ -1596,7 +1596,7 @@ Here is a new section for the design document that describes how to incorporate 
 
 ## 8. Supporting Locomotion State
 
-To provide a complete picture of a device's status, it's important to know not just its telemetry but also its current physical intent—whether it's stationary, parked, or actively moving towards a goal. We will call this the `LocomotionState`.
+To provide a complete picture of a device's status, it's important to know not just its telemetry but also its current physical intent-whether it's stationary, parked, or actively moving towards a goal. We will call this the `LocomotionState`.
 
 This state will be determined and reported by the robot itself, making it a piece of primary source data. The Device API will simply consume and expose it, remaining agnostic to the business reasons behind the robot's activity.
 
@@ -1753,7 +1753,7 @@ You're right, "locomotion state" is a bit technical. We can definitely choose a 
 
 *   **`TransitState`**: Your suggestion. It's good, but often implies something is actively "in transit." It might feel slightly awkward when the state is `PARKED`.
 *   **`ActivityState`**: A bit broader. Could be confused with other non-movement activities.
-*   **`MovementState`**: This is a strong candidate. It's simple, clear, and accurately describes the domain—the device's physical movement. It works well for all the enum values.
+*   **`MovementState`**: This is a strong candidate. It's simple, clear, and accurately describes the domain-the device's physical movement. It works well for all the enum values.
 
 I would recommend **`MovementState`** as it is the most clear and encompassing term. I will use it in the updated schema below.
 
@@ -4131,7 +4131,7 @@ This model provides a perfect separation of concerns.
 
 ### Fleet Management API Design (`fleet_api.proto`)
 
-This API is designed specifically to power frontends and operational logic. Its primary resource is not a `Device`, but a `FleetMember`—an enriched view of a device with all its current business context.
+This API is designed specifically to power frontends and operational logic. Its primary resource is not a `Device`, but a `FleetMember`-an enriched view of a device with all its current business context.
 
 ```protobuf
 syntax = "proto3";
@@ -5926,7 +5926,7 @@ The service does not have one generic API; it has two highly specific ones tailo
 
 The existing `Fleet Service` is a **read-optimized cache designed to protect downstream systems from the complexity and slowness of querying multiple services.** It subscribes to low-level data and presents a simple, aggregated view for a few critical, performance-sensitive clients.
 
-It is **not** currently an orchestrator, nor is it the authoritative owner of business logic. It primarily *reflects* and *caches* state decided by other services (like the `Operations Service`). This is why evolving it into the central `DeviceFleetService` we designed is the perfect strategic direction—it builds on this foundation and elevates it from a tactical cache to a core pillar of the system.
+It is **not** currently an orchestrator, nor is it the authoritative owner of business logic. It primarily *reflects* and *caches* state decided by other services (like the `Operations Service`). This is why evolving it into the central `DeviceFleetService` we designed is the perfect strategic direction-it builds on this foundation and elevates it from a tactical cache to a core pillar of the system.
 
 ---
 
@@ -5979,7 +5979,7 @@ This means you can safely evolve the internal `Fleet Service` without breaking t
 
 ### The Refined Strategy: Evolve the Fleet Service with the Uber Integration in Mind
 
-So, my recommendation remains the same—evolve the existing `Fleet Service`—but our plan now needs to explicitly account for its existing responsibilities.
+So, my recommendation remains the same-evolve the existing `Fleet Service`-but our plan now needs to explicitly account for its existing responsibilities.
 
 Here is the updated phased evolution plan:
 

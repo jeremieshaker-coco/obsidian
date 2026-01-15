@@ -2,7 +2,7 @@
 
 ## What is Coco?
 
-Coco is a **last-mile delivery service** that deploys **human-operated sidewalk robots** to transport food, groceries, and small goods from merchants to customers. Unlike fully autonomous delivery companies, Coco robots are remotely driven by **pilots**—human operators who control the robots in real-time using live video feeds.
+Coco is a **last-mile delivery service** that deploys **human-operated sidewalk robots** to transport food, groceries, and small goods from merchants to customers. Unlike fully autonomous delivery companies, Coco robots are remotely driven by **pilots**-human operators who control the robots in real-time using live video feeds.
 
 ## Value Proposition
 
@@ -38,8 +38,8 @@ Coco operates as a **delivery fulfillment partner** for major food delivery plat
 
 Coco's business is a **two-sided matching problem**:
 
-- **Supply**: Our robot fleet and pilot workforce—we control this
-- **Demand**: Delivery requests from partners—we don't control this, but we need to understand it
+- **Supply**: Our robot fleet and pilot workforce-we control this
+- **Demand**: Delivery requests from partners-we don't control this, but we need to understand it
 
 #### Partner Integration Models
 

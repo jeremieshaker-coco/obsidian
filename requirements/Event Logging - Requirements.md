@@ -59,12 +59,12 @@ The system shall support the following event categories:
 
 #### FR-4.1: Demand Inbound (Offer Funnel)
 Events tracking demand BEFORE we accept it:
-- `offer.received` — Partner sends a delivery request
-- `offer.accepted` — We accepted the offer
-- `offer.rejected` — We rejected (must include `rejection_reason`)
-- `offer.expired` — We didn't respond in time
-- `quote.requested` — Partner asks for ETA/price estimate
-- `quote.provided` — We respond with quote
+- `offer.received` - Partner sends a delivery request
+- `offer.accepted` - We accepted the offer
+- `offer.rejected` - We rejected (must include `rejection_reason`)
+- `offer.expired` - We didn't respond in time
+- `quote.requested` - Partner asks for ETA/price estimate
+- `quote.provided` - We respond with quote
 
 #### FR-4.2: Robot Supply Lifecycle
 - `robot.state_changed`
@@ -108,28 +108,28 @@ Events tracking demand AFTER we've accepted it:
 - `attempt.started`
 - `attempt.completed`
 - `attempt.failed`
-- `attempt.rescued` — Handed off to human courier
+- `attempt.rescued` - Handed off to human courier
 
 ### FR-5: Event Payload Standards
 
 **FR-5.1**: Every event MUST include:
-- `event` — Event identifier from the registry
-- `timestamp` — ISO 8601 format
+- `event` - Event identifier from the registry
+- `timestamp` - ISO 8601 format
 
 **FR-5.2**: Every event SHOULD include (when available):
-- `source` — Partner origin (`uber`, `doordash`, `wolt`, `direct`)
+- `source` - Partner origin (`uber`, `doordash`, `wolt`, `direct`)
 - Entity IDs: `robot_id`, `delivery_id`, `demand_id`, `trip_id`, `pilot_id`, `merchant_id`, `offer_id`, `attempt_id`
 
 **FR-5.3**: Location context SHOULD be included for demand analysis:
-- `parking_lot_id` — Where robot is stationed
-- `zone_id` — Geographic zone for aggregation
+- `parking_lot_id` - Where robot is stationed
+- `zone_id` - Geographic zone for aggregation
 
 **FR-5.4**: Offer rejection events MUST include:
-- `rejection_reason` — Why we said no (e.g., `no_available_robots`, `route_too_long`)
+- `rejection_reason` - Why we said no (e.g., `no_available_robots`, `route_too_long`)
 
 **FR-5.5**: Error events MUST include:
-- `error.code` — Machine-readable error code
-- `error.message` — Human-readable description
+- `error.code` - Machine-readable error code
+- `error.message` - Human-readable description
 
 ### FR-6: Event Ingestion Pipeline
 

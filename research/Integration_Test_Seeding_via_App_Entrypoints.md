@@ -43,7 +43,7 @@ export async function seedPilots(prisma, pilotIds, now, overrides) {
 
 3. **Inconsistent Test Data**: The data shape created by factories may not match what the application actually produces, leading to false positives.
 
-4. **Maintenance Burden**: Two separate code paths to maintain—one for production and one for tests.
+4. **Maintenance Burden**: Two separate code paths to maintain-one for production and one for tests.
 
 ---
 
@@ -53,7 +53,7 @@ The simulation module provides a mature pattern for seeding data through applica
 
 ### Key Components
 
-#### 1. MessageService — Internal Event Router
+#### 1. MessageService - Internal Event Router
 
 The `MessageService` acts as an in-memory AMQP replacement, routing events to registered handlers:
 
@@ -72,7 +72,7 @@ export class MessageService {
 }
 ```
 
-#### 2. Supply Models — Emit Events Instead of Direct DB Writes
+#### 2. Supply Models - Emit Events Instead of Direct DB Writes
 
 The `PilotModel` and `RobotModel` emit supply events via callbacks:
 
@@ -103,7 +103,7 @@ export class PilotModel extends Model<State, FsmState> {
 }
 ```
 
-#### 3. SupplyEventHandler — The Application Entrypoint
+#### 3. SupplyEventHandler - The Application Entrypoint
 
 Events are processed by the `SupplyEventHandler`, which calls `SupplyService`:
 
@@ -121,7 +121,7 @@ export class SupplyEventHandler {
 }
 ```
 
-#### 4. Demand Creation — Uses DemandController Directly
+#### 4. Demand Creation - Uses DemandController Directly
 
 The sim creates demands through the actual API layer:
 
@@ -143,7 +143,7 @@ export async function genDeliveryOpportunity(params: {
 }
 ```
 
-#### 5. Prismock — In-Memory Database
+#### 5. Prismock - In-Memory Database
 
 The sim uses `prismock` for an in-memory Prisma-compatible database:
 
@@ -343,13 +343,13 @@ export function createPilotSupplyEvent(params: Partial<PilotSupplyEventPayload>)
 
 ## References
 
-- `src/sim/sim.service.ts` — Simulation orchestrator
-- `src/sim/models/pilot.model.ts` — Pilot model with event emission
-- `src/sim/models/robot.model.ts` — Robot model with event emission
-- `src/sim/modules/message/message.service.ts` — Internal event routing
-- `src/modules/supply/handlers/supply-event.handler.ts` — Event handler entrypoint
-- `src/modules/supply/service/supply.service.ts` — Supply processing logic
-- `test/demand/demand.integration.spec.ts` — Current integration test pattern
+- `src/sim/sim.service.ts` - Simulation orchestrator
+- `src/sim/models/pilot.model.ts` - Pilot model with event emission
+- `src/sim/models/robot.model.ts` - Robot model with event emission
+- `src/sim/modules/message/message.service.ts` - Internal event routing
+- `src/modules/supply/handlers/supply-event.handler.ts` - Event handler entrypoint
+- `src/modules/supply/service/supply.service.ts` - Supply processing logic
+- `test/demand/demand.integration.spec.ts` - Current integration test pattern
 
 
 

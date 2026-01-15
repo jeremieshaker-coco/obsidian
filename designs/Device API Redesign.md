@@ -183,7 +183,7 @@ To ensure the full deletion of legacy services, the following logic is redistrib
 
 * **PIN Validation (Tier 2):** Responsibility for validating **2-digit PINs** and **loading flows** moves to the Fleet Service. Tier 1 merely provides the RPC to receive the keypad entry, while Tier 2 validates it against the active delivery context.  
 * **FO Task Orchestration (Tier 2):** The logic that triggers **Field Operations tasks** (e.g., creating a `BATTERY_SWAP` when SOC \< 20% or `UNSTUCK_BOT` based on sensor triggers) is moved to Tier 2’s operational watchdog.  
-* **Geofencing & Trip Transitions (Tier 2):** The geofencing engine—previously in the Operations Service—now lives in Tier 2\. It compares Tier 1 location data against merchant/customer boundaries to trigger `TripStageChanged` events (e.g., `AT_PICKUP`).  
+* **Geofencing & Trip Transitions (Tier 2):** The geofencing engine-previously in the Operations Service-now lives in Tier 2\. It compares Tier 1 location data against merchant/customer boundaries to trigger `TripStageChanged` events (e.g., `AT_PICKUP`).  
 * **Operational Alerting (Tier 2):** Tier 2 becomes responsible for publishing **health alerts** to Slack or PagerDuty when Tier 1 reports a critical hardware failure that grounds a robot.
 ---------------------------------------
 

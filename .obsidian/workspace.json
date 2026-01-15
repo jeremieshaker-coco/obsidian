@@ -13,12 +13,26 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "designs/Device API Redesign - Robot Software Team.md",
+                "file": "tasks/Device Events Refactoring.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Device API Redesign - Robot Software Team"
+              "title": "Device Events Refactoring"
+            }
+          },
+          {
+            "id": "322b6156ffcfe73d",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "research/DEVICE_EVENTS.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "DEVICE_EVENTS"
             }
           }
         ]
@@ -195,10 +209,17 @@
   },
   "active": "21b796371860b777",
   "lastOpenFiles": [
+    "designs/Device API Redesign v3.md",
+    "tasks/Device Events Refactoring.md",
     "designs/Device API Redesign v2.md",
+    "research/SYSTEM_ARCHITECTURE.md",
+    "research/DEVICE_EVENTS.md",
+    "Untitled.md",
     "designs/Device API Redesign - Robot Software Team.md",
-    "research/DEVICE_API_RESEARCH_NOTES.md",
+    "reference/Device Service.md",
+    "reference/Robot.md",
     "reference/State Service.md",
+    "research/DEVICE_API_RESEARCH_NOTES.md",
     "designs/Device API Redesign.md",
     "requirements/Device API - Product Requirements Document.md",
     "designs/Event Logging - Technical Design.md",
@@ -214,13 +235,6 @@
     "reference/table/Attempt Table.md",
     "reference/table/AttemptStatus Enum.md",
     "reference/table/Database Architecture Overview.md",
-    "reference/table/Device RDS Schema.md",
-    "reference/table/Trip Monitor RDS Schema.md",
-    "reference/table/Robot Planning Table.md",
-    "reference/table/DemandStatus Enum.md",
-    "reference/table/TaskStatus Enum.md",
-    "reference/table/AttemptCancellationReason Enum.md",
-    "reference/table/Deliveries V3 RDS Schema.md",
     "reference/table",
     "savedchats",
     "Users/jeremieshaker",

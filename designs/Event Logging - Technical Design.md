@@ -344,7 +344,7 @@ SELECT * FROM delivery_session;
 | Wrong event names | Low | Registry with autocomplete; ESLint rules |
 | TS/Go registry out of sync | Medium | Code review; future: protobuf codegen |
 
-**Overall Risk**: Low. This is additive infrastructure—if it fails, Datadog continues working.
+**Overall Risk**: Low. This is additive infrastructure-if it fails, Datadog continues working.
 
 ---
 

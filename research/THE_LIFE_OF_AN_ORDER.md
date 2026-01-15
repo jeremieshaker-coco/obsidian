@@ -1,6 +1,6 @@
 # The Life of an Order
 
-This document provides an exhaustive walkthrough of a delivery order's complete lifecycle—from creation through fulfillment or failure. It covers all the edge cases, failure modes, and recovery mechanisms that make up our delivery system.
+This document provides an exhaustive walkthrough of a delivery order's complete lifecycle-from creation through fulfillment or failure. It covers all the edge cases, failure modes, and recovery mechanisms that make up our delivery system.
 
 ---
 
@@ -316,8 +316,8 @@ flowchart TD
 | 10.3 | `lidCommandSync(OPEN)` | State Service | MQTT command |
 | 10.4 | `LID_OPENED` event | State Service | LidCycle updated |
 | 10.5 | `AttemptStatus.DeliveryInProgress` | Deliveries | State transition |
-| 10.6 | Customer retrieves food | Physical | — |
-| 10.7 | Lid closed (physical/button/remote) | Robot | — |
+| 10.6 | Customer retrieves food | Physical | - |
+| 10.7 | Lid closed (physical/button/remote) | Robot | - |
 | 10.8 | `LID_CLOSED` event | State Service | LidCycle completed |
 | 10.9 | `AttemptStatus.Delivered` | Deliveries | State transition |
 
@@ -337,7 +337,7 @@ flowchart TD
 | 12.1 | Check for next scheduled delivery | Dispatch Engine | `scheduledDeliveryId` |
 | 12.2 | If none: Create Return Demand | Dispatch Engine | `DemandType.Return` |
 | 12.3 | Pilot connects for return | Operations | Trip assignment |
-| 12.4 | Robot returns to parking lot | Physical | — |
+| 12.4 | Robot returns to parking lot | Physical | - |
 | 12.5 | `TripState.COMPLETED` | Operations | Final trip status |
 | 12.6 | `RobotState.PARKED` | Operations | Robot available |
 

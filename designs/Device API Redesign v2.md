@@ -14,7 +14,7 @@ This redesign addresses these issues through:
 
 - **Simplified State Management**: Each service owns one domain and publishes authoritative events. Device Service owns physical state, Lid Service owns lid cycles, Operations owns trips/tasks. Fleet Device Service provides a read-only, denormalized view.
 - **Strong Typing with Protobuf**: All service APIs and events use `.proto` definitions, providing compile-time safety, backward compatibility, and auto-generated clients.
-- **Single Responsibility Per Service**: Clear boundaries—Device Service is the anti-corruption layer for hardware data, Lid Service handles all lid logic, Operations manages trips/tasks without device shadow concerns, and Fleet Device Service serves read-only cross-domain queries.
+- **Single Responsibility Per Service**: Clear boundaries-Device Service is the anti-corruption layer for hardware data, Lid Service handles all lid logic, Operations manages trips/tasks without device shadow concerns, and Fleet Device Service serves read-only cross-domain queries.
 
 ---
 
@@ -38,85 +38,26 @@ This redesign addresses these issues through:
 ## Architecture Overview
 
 ```mermaid
-flowchart TB
-    subgraph Sources["External Data Sources"]
-        Robot["Physical Robot (MQTT)"]
-        DriveU["DriveU Cloud"]
-        AWS["AWS Greengrass"]
-    end
-
-    subgraph Tier1["Tier 1: Domain Services (Own State)"]
-        DeviceService["Device Service<br/>(Anti-Corruption Layer)<br/>NEW"]
-        LidService["Lid Service<br/>(formerly State Service)"]
-        OperationsService["Operations Service<br/>(Simplified)"]
-        DeliveriesService["Deliveries Service"]
-    end
-
-    subgraph Tier2["Tier 2: Read Aggregator"]
-        FleetDeviceService["Fleet Device Service<br/>(Read-Only Aggregator)<br/>NEW"]
+flowchart LR
+    subgraph before["❌ BEFORE: Tight Coupling"]
+        direction TB
+        Robot1["🤖 Robot<br/>(MQTT)"]
+        Robot1 --> State1["State Service"]
+        Robot1 --> Fleet1["Fleet Service"]
+        Robot1 --> Ops1["Operations"]
+        Robot1 --> Other1["...others"]
     end
     
-    subgraph Integrations["External Integrations"]
-        FleetService["Fleet Service"]
+    subgraph after["✅ AFTER: Single Entry Point"]
+        direction TB
+        Robot2["🤖 Robot<br/>(MQTT)"]
+        Robot2 --> Device["Device Service<br/>(Anti-Corruption Layer)"]
+        Device -->|"Clean Events"| Backend["Backend Services"]
     end
-
-    subgraph Deprecated["DEPRECATED - To Be Removed"]
-        KafkaBridge["MQTT-to-Kafka Bridge<br/>DECOMMISSIONED"]
-    end
-
-    subgraph Consumers["Consumers"]
-        MC["Mission Control"]
-        DispatchEngine["Dispatch Engine<br/>(Own Postgres Cache)"]
-        IntegrationsService["Integrations Service"]
-        UberAPI["Uber Eats API"]
-    end
-
-    %% Raw data ingestion
-    Robot --> DeviceService
-    DriveU --> DeviceService
-    AWS --> DeviceService
-
-    %% Device Service publishes events
-    DeviceService -->|"Device.LidOpened<br/>Device.LidClosed"| LidService
-    DeviceService -->|"Device.Heartbeat<br/>Device.Moved<br/>Device.ConnectivityChanged"| OperationsService
-    DeviceService -->|"Device.Heartbeat<br/>Device.BatteryLow<br/>Device.HealthDegraded"| DispatchEngine
-    DeviceService -->|"Device.Heartbeat<br/>(Full state snapshots)"| FleetService
-
-    %% Operations publishes domain events
-    OperationsService -->|"Trip.*, FoTask.*"| DispatchEngine
-    OperationsService -->|"Trip.*, FoTask.*"| FleetService
-    OperationsService -->|"Trip.*"| DeliveriesService
-
-    %% Lid Service publishes events
-    LidService -->|"LidCycle.*"| DeliveriesService
-
-    %% Fleet Service manages Uber integration
-    FleetService -->|"Position updates<br/>Online/Offline"| UberAPI
-    
-    %% Read replicas flow to Fleet Device Service
-    DeviceService -.->|"Event Stream"| FleetDeviceService
-    LidService -.->|"Event Stream"| FleetDeviceService
-    OperationsService -.->|"Event Stream"| FleetDeviceService
-    DeliveriesService -.->|"Event Stream"| FleetDeviceService
-    FleetService -.->|"Provider Mappings"| FleetDeviceService
-
-    %% Consumers query Fleet Device Service for reads
-    MC -->|"ListFleetDevices<br/>(human-facing)"| FleetDeviceService
-    
-    %% Consumers needing fresh data query owners directly
-    IntegrationsService -->|"GetTrip (fresh)"| OperationsService
-    IntegrationsService -->|"GetProviderVehicleMapping"| FleetService
-
-    %% Show what's being replaced (Kafka path)
-    Robot -.->|"OLD: MQTT→Kafka"| KafkaBridge
-    KafkaBridge -.->|"OLD: Kafka→Redis"| FleetService
-    
-    style KafkaBridge fill:#ffcccc,stroke:#cc0000,stroke-width:2px
-    style DeviceService fill:#ccffcc,stroke:#00cc00,stroke-width:2px
-    style FleetDeviceService fill:#ccffcc,stroke:#00cc00,stroke-width:2px
-    style FleetService fill:#ffffcc,stroke:#cccc00,stroke-width:2px
-
 ```
+
+**The Key Change:** Instead of multiple services consuming raw MQTT directly, **Device Service** becomes the single consumer. It validates, normalizes, and publishes clean `Device.*` events that backend services subscribe to.
+
 
 ---
 
@@ -149,17 +90,20 @@ flowchart TB
 
 Device Service publishes both **full state snapshots** (Heartbeat) and **semantic business events** for high-value changes:
 
-|Event|Trigger|Payload|Purpose|
-|---|---|---|---|
-|`Device.Heartbeat`|Every processed heartbeat (~5-10s)|Full Device snapshot|Cache builders, full state consumers|
-|`Device.Moved`|Location changed > 10meters|Serial, new/old location, distance|Route tracking, geofence detection|
-|`Device.LidOpened`|Lid state: closed → open|Serial, timestamp|Lid cycle tracking, security alerts|
-|`Device.LidClosed`|Lid state: open → closed|Serial, timestamp|Lid cycle tracking|
-|`Device.BatteryLow`|Battery crosses 20% threshold|Serial, battery_percent, timestamp|Ops alerts, preemptive recharging|
-|`Device.BatteryCritical`|Battery crosses 5% threshold|Serial, battery_percent, timestamp|Critical ops alerts, trip safety|
-|`Device.ConnectivityChanged`|Online ↔ Offline transition|Serial, new/old status, timestamp|Trip safety, fleet monitoring|
-|`Device.HealthDegraded`|Component enters fault state|Serial, component, fault code|Maintenance alerts|
-|`Device.HealthRestored`|Component returns to OK|Serial, component|Maintenance resolution|
+| Event                        | Trigger                                 | Payload                            | Consumers                                                                                                                                                                                                                                                                                                          | Purpose                              |
+| ---------------------------- | --------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| `Device.Heartbeat`           | Every processed heartbeat (~5-10s)      | Full Device snapshot               | **Dispatch Engine**: Update robot supply cache (location, battery, service codes) for assignment decisions<br/>**Fleet Service**: Update Redis/DynamoDB cache for Uber position updates<br/>**Fleet Device Service**: Maintain read replica for Mission Control<br/>**Trip Monitor**: Update trip trace, recalculate ETA | Cache builders, full state consumers |
+| `Device.Moved`               | Location changed > 10m                  | Serial, new/old location, distance | **Trip Monitor**: Route deviation detection, arrival detection<br/>**Operations Service**: Geofence checks (entering/leaving service areas)                                                                                                                                                                        | Route tracking, geofence detection   |
+| `Device.LidOpened`           | Lid state: closed → open                | Serial, timestamp                  | **Lid Service**: Start lid cycle, track open duration<br/>**Deliveries Service**: Track loading start time                                                                                                                                                                                                         | Lid cycle tracking, security alerts  |
+| `Device.LidClosed`           | Lid state: open → closed                | Serial, timestamp, seconds_open    | **Lid Service**: Complete lid cycle, emit LidCycle.Completed<br/>**Deliveries Service**: Trigger load completion if conditions met                                                                                                                                                                                 | Lid cycle tracking                   |
+| `Device.LidJammed`           | Lid mechanism reports fault             | Serial, fault_code, timestamp      | **Lid Service**: Abort lid cycle, alert operations<br/>**Operations Service**: Create urgent FO task<br/>**Deliveries Service**: Handle failed handoff scenario                                                                                                                                                    | Critical fault handling              |
+| `Device.BatteryLow`          | Battery crosses 20% threshold           | Serial, battery_percent, timestamp | **Operations Service**: Create FO task for battery swap<br/>**Dispatch Engine**: Reduce robot availability score                                                                                                                                                                                                   | Ops alerts, preemptive recharging    |
+| `Device.BatteryCritical`     | Battery crosses 5% threshold            | Serial, battery_percent, timestamp | **Operations Service**: Ground robot, create urgent FO task<br/>**Dispatch Engine**: Remove from available supply<br/>**Trip Monitor**: Alert if robot is mid-trip                                                                                                                                                 | Critical ops alerts, trip safety     |
+| `Device.ConnectivityChanged` | Online ↔ Offline transition             | Serial, new/old status, timestamp  | **Operations Service**: Update robot connectivity status, potentially ground if offline too long<br/>**Dispatch Engine**: Remove/add to supply<br/>**Fleet Device Service**: Update status to OFFLINE                                                                                                              | Trip safety, fleet monitoring        |
+| `Device.HealthDegraded`      | Component enters fault state            | Serial, component, fault code      | **Operations Service**: Create FO task, potentially ground robot<br/>**Dispatch Engine**: Mark robot unhealthy, remove from supply                                                                                                                                                                                 | Maintenance alerts                   |
+| `Device.HealthRestored`      | Component returns to OK                 | Serial, component                  | **Operations Service**: Cancel pending maintenance task if applicable<br/>**Dispatch Engine**: Mark robot healthy, add to supply                                                                                                                                                                                   | Maintenance resolution               |
+| `Device.EmergencyStop`       | Emergency stop button pressed           | Serial, trigger_source, timestamp  | **Operations Service**: Immediately ground robot, create critical alert<br/>**Dispatch Engine**: Remove from supply immediately<br/>**Trip Monitor**: Pause trip, alert if mid-delivery                                                                                                                            | Safety-critical response             |
+| `Device.PinEntry`            | Key pressed on device pin pad           | Serial, entered_key                | **Lid Service**: Validate PIN against active unlock context, decide whether to open lid                                                                                                                                                                                                                            | Lid unlock                           |
 
 **Design Philosophy (Hybrid Approach):**
 
@@ -240,6 +184,29 @@ message DeviceHealthRestored {
   string device_name = 1;
   string component_name = 2;
   google.protobuf.Timestamp restored_at = 3;
+}
+
+// ===== Lid Fault Events =====
+
+message DeviceLidJammed {
+  string device_name = 1;
+  string fault_code = 2;            // Specific lid fault code from hardware
+  google.protobuf.Timestamp detected_at = 3;
+}
+
+// ===== Safety Events =====
+
+message DeviceEmergencyStop {
+  string device_name = 1;
+  EmergencyStopSource source = 2;   // BUTTON, REMOTE, SYSTEM
+  google.protobuf.Timestamp triggered_at = 3;
+}
+
+enum EmergencyStopSource {
+  EMERGENCY_STOP_SOURCE_UNSPECIFIED = 0;
+  EMERGENCY_STOP_SOURCE_BUTTON = 1;       // Physical button on robot
+  EMERGENCY_STOP_SOURCE_REMOTE = 2;       // Sent from Mission Control
+  EMERGENCY_STOP_SOURCE_SYSTEM = 3;       // Automatic (e.g., detected collision)
 }
 
 ```
@@ -343,7 +310,7 @@ message RobotEvent {
     LidClosedEvent lid_closed = 11;
     LidOpenRequestEvent lid_open_request = 12;
     LidCloseRequestEvent lid_close_request = 13;
-    KeypadEntryEvent keypad_entry = 14;
+    PinEntryEvent pin_entry = 14;
     ComponentFaultEvent component_fault = 15;
     ComponentRecoveredEvent component_recovered = 16;
   }
@@ -377,9 +344,9 @@ message LidCloseRequestEvent {
   string request_id = 1; // Unique ID for this lock request
 }
 
-// ===== Keypad Events =====
+// ===== Pin Events =====
 
-message KeypadEntryEvent {
+message PinEntryEvent {
   string entered_key = 1;      // The key that was entered
 }
 
@@ -457,7 +424,7 @@ Key RPCs (see [Complete Device Service Proto](https://www.notion.so/Device-API-R
 - `GetDevice`, `ListDevices`, `BatchGetDevices` - Read device state
 - `StreamDeviceUpdates` - Real-time updates
 - `SendCommand` - Send commands to robot (unlock lid, reboot, etc.)
-- `UpdateDeviceShadow`, `GetDeviceShadow` - Manage desired robot behavior
+- `UpdateLightMode`/`GetLightMode`, `UpdateSoundProfile`/`GetSoundProfile`, `UpdateOtaEnabled`/`GetOtaEnabled`, etc. - Manage desired robot behavior per field
 - `SetUnlockPin`, `ClearUnlockPin` - **Temporary**: Remove after Magic Lid migration
 
 **Note:** PIN management via `SetUnlockPin`/`ClearUnlockPin` is a temporary requirement to support the current Magic Lid firmware flow. Once Magic Lid migrates to server-side validation, PIN commands will be eliminated entirely from Device Service.
@@ -556,7 +523,7 @@ message RobotEvent {
     LidClosedEvent lid_closed = 11;
     LidOpenRequestEvent lid_open_request = 12;
     LidCloseRequestEvent lid_close_request = 13;
-    KeypadEntryEvent keypad_entry = 14;
+    PinEntryEvent pin_entry = 14;
     ComponentFaultEvent component_fault = 15;
     ComponentRecoveredEvent component_recovered = 16;
   }
@@ -590,9 +557,9 @@ message LidCloseRequestEvent {
   string request_id = 1; // Unique ID for this lock request
 }
 
-// ===== Keypad Events =====
+// ===== Pin Events =====
 
-message KeypadEntryEvent {
+message PinEntryEvent {
   string entered_key = 1;      // The key that was entered
 }
 
@@ -673,7 +640,7 @@ Key RPCs (see [Complete Device Service Proto](https://www.notion.so/Device-API-R
 - `GetDevice`, `ListDevices`, `BatchGetDevices` - Read device state
 - `StreamDeviceUpdates` - Real-time updates
 - `SendCommand` - Send commands to robot (unlock lid, reboot, etc.)
-- `UpdateDeviceShadow`, `GetDeviceShadow` - Manage desired robot behavior
+- `UpdateLightMode`/`GetLightMode`, `UpdateSoundProfile`/`GetSoundProfile`, `UpdateOtaEnabled`/`GetOtaEnabled`, etc. - Manage desired robot behavior per field
 - `SetUnlockPin`, `ClearUnlockPin` - **Temporary**: Remove after Magic Lid migration
 
 **Note:** PIN management via `SetUnlockPin`/`ClearUnlockPin` is a temporary requirement to support the current Magic Lid firmware flow. Once Magic Lid migrates to server-side validation, PIN commands will be eliminated entirely from Device Service.
@@ -705,13 +672,13 @@ Key RPCs (see [Complete Device Service Proto](https://www.notion.so/Device-API-R
 
 **Events Published:**
 
-|Event|Trigger|Payload|
-|---|---|---|
-|`LidCycle.Started`|Lid opened|Serial, cycle_id, context_id (e.g., delivery_id)|
-|`LidCycle.Completed`|Lid closed within timeout|Serial, cycle_id, duration|
-|`LidCycle.Timeout`|Lid open too long|Serial, cycle_id|
-|`LidCycle.PinValidated`|Correct PIN entered|Serial, pin_type (merchant/customer)|
-|`LidCycle.PinRejected`|Incorrect PIN entered|Serial, attempted_pin|
+|Event|Trigger|Payload|Consumers|Purpose|
+|---|---|---|---|---|
+|`LidCycle.Started`|Lid opened|Serial, cycle_id, context_id (e.g., delivery_id)|**Deliveries Service**: Track loading/unloading started<br/>**Operations Service**: Update trip stage if at merchant/customer|Lid cycle tracking|
+|`LidCycle.Completed`|Lid closed within timeout|Serial, cycle_id, duration, source, reasons|**Deliveries Service**: Mark robot as loaded (if load reason), update hasFood state, trigger departure<br/>**Operations Service**: Update trip stage<br/>**Fleet Device Service**: Update active lid cycle status|Load/unload confirmation|
+|`LidCycle.Timeout`|Lid open too long|Serial, cycle_id|**Deliveries Service**: Alert, potentially cancel delivery<br/>**Operations Service**: Create FO task, potentially ground robot|Safety/operational alerts|
+|`LidCycle.PinValidated`|Correct PIN entered|Serial, pin_type (merchant/customer)|**Deliveries Service**: Track PIN entry success for analytics<br/>**Operations Service**: Update trip metrics|PIN flow tracking|
+|`LidCycle.PinRejected`|Incorrect PIN entered|Serial, attempted_pin|**Deliveries Service**: Track failed attempts, alert if threshold exceeded<br/>**Operations Service**: Create support ticket if repeated failures|Security monitoring|
 
 **Note:** These are events describing what happened, not commands. The Deliveries Service subscribes and decides what to do (e.g., mark delivery as loaded).
 
@@ -747,22 +714,27 @@ When a caller (e.g., Deliveries Service) sets a PIN, Lid Service:
 
 **Events Published:**
 
-|Event|Trigger|Payload|
-|---|---|---|
-|`Trip.Created`|New trip assigned|trip_id, serial, trip_type|
-|`Trip.StageChanged`|Robot arrives at waypoint|trip_id, new_stage (AT_PICKUP, LOADING, etc.)|
-|`Trip.Completed`|Trip finished|trip_id, outcome|
-|`FoTask.Created`|Maintenance task created|task_id, serial, task_type|
-|`FoTask.StatusChanged`|Task assigned/started/completed|task_id, new_status|
-|`Deployment.Created`|Robot deployed to location|deployment_id, serial, location|
-|`Deployment.Ended`|Robot undeployed|deployment_id, serial|
+|Event|Trigger|Payload|Consumers|Purpose|
+|---|---|---|---|---|
+|`Trip.Created`|New trip assigned|trip_id, serial, trip_type, origin, destination|**Dispatch Engine**: Update robot's scheduled demands, mark as assigned<br/>**Deliveries Service**: Link attempt to trip<br/>**Fleet Device Service**: Update status to ON_TRIP<br/>**Trip Monitor**: Start monitoring trip|Trip lifecycle tracking|
+|`Trip.StageChanged`|Robot arrives at waypoint|trip_id, new_stage (AT_PICKUP, LOADING, IN_TRANSIT, AT_DESTINATION)|**Deliveries Service**: Update attempt status (AtPickup, InTransit, AtDestination)<br/>**Integrations Service**: Push status to DoorDash/Uber<br/>**Trip Monitor**: Update ETA calculations|Delivery status updates|
+|`Trip.Completed`|Trip finished|trip_id, outcome, robot_serial|**Dispatch Engine**: Release robot from assignment, add back to supply<br/>**Deliveries Service**: Mark attempt as Delivered<br/>**Fleet Device Service**: Update status to DEPLOYED<br/>**Trip Monitor**: Stop monitoring, archive trip data|Trip finalization|
+|`Trip.Cancelled`|Trip cancelled|trip_id, cancellation_reason, robot_serial|**Dispatch Engine**: Release robot, update demand status<br/>**Deliveries Service**: Mark attempt as Canceled with reason<br/>**Integrations Service**: Push cancellation to partners|Trip cancellation handling|
+|`FoTask.Created`|Maintenance task created|task_id, serial, task_type, priority|**Dispatch Engine**: Mark robot as needs_maintenance, reduce/remove from supply<br/>**Fleet Device Service**: Update status to NEEDS_MAINTENANCE|Maintenance scheduling|
+|`FoTask.StatusChanged`|Task assigned/started/completed|task_id, new_status, operator_id|**Dispatch Engine**: If started → undergoing_maintenance; if completed → clear flags<br/>**Fleet Device Service**: Update status (UNDER_MAINTENANCE or back to DEPLOYED)|Maintenance progress|
+|`Deployment.Created`|Robot deployed to location|deployment_id, serial, location|**Dispatch Engine**: Add robot to supply for location<br/>**Fleet Service**: Update provider vehicle status (online)<br/>**Fleet Device Service**: Update status to DEPLOYED|Fleet management|
+|`Deployment.Ended`|Robot undeployed|deployment_id, serial|**Dispatch Engine**: Remove robot from supply<br/>**Fleet Service**: Update provider vehicle status (offline)<br/>**Fleet Device Service**: Update status to UNDEPLOYED|Fleet management|
 
-**Note:** Operations no longer publishes `Robots.StateChange` with `operationState`. Instead:
+**Note:** Operations no longer publishes `Robots.StateChange` with `operationState`. Operations publishes only domain events (`Trip.*`, `FoTask.*`, `Deployment.*`).
 
-- If a robot has active trips → Fleet Device Service derives `status=ON_TRIP`
-- If a robot has pending FO tasks → Fleet Device Service derives `status=NEEDS_MAINTENANCE`
-- If a robot has an FO in progress → Fleet Device Service derives `status=UNDER_MAINTENANCE`
-- If a robot is deployed with no trips/tasks → Fleet Device Service derives `status=DEPLOYED`
+**Fleet Device Service** (for human-facing UIs) derives `FleetDeviceStatus` from these domain events:
+
+- `Trip.Created` → `status=ON_TRIP`
+- `FoTask.Created` (pending) → `status=NEEDS_MAINTENANCE`
+- `FoTask.StatusChanged` (in progress) → `status=UNDER_MAINTENANCE`
+- `Deployment.Created` (no trips/tasks) → `status=DEPLOYED`
+
+**Other services** (Dispatch Engine, Fleet Service, etc.) derive their own status from the domain facts they track-see "Consumer Changes Required" table in State Management Cleanup section.
 
 ---
 
@@ -817,9 +789,11 @@ When a caller (e.g., Deliveries Service) sets a PIN, Lid Service:
 
 **Events Published:**
 
-- `Fleet.ProviderMappingCreated` - When a robot is registered with a provider
-- `Fleet.ProviderMappingUpdated` - When a provider vehicle ID changes
-- `Fleet.ProviderMappingRemoved` - When a provider mapping is deleted
+|Event|Trigger|Payload|Consumers|Purpose|
+|---|---|---|---|---|
+|`Fleet.ProviderMappingCreated`|Robot registered with provider|serial, provider (uber/doordash), provider_vehicle_id|**Fleet Device Service**: Add provider mapping to read replica<br/>**Integrations Service**: Cache vehicle ID for faster lookups|Provider integration setup|
+|`Fleet.ProviderMappingUpdated`|Provider vehicle ID changes|serial, provider, old_vehicle_id, new_vehicle_id|**Fleet Device Service**: Update provider mapping in replica<br/>**Integrations Service**: Invalidate cached vehicle ID|Provider ID management|
+|`Fleet.ProviderMappingRemoved`|Provider mapping deleted|serial, provider|**Fleet Device Service**: Remove provider mapping from replica<br/>**Integrations Service**: Stop sending updates for this robot to provider|Provider offboarding|
 
 These events allow Fleet Device Service to maintain read replicas of provider mappings.
 
@@ -871,10 +845,12 @@ These events allow Fleet Device Service to maintain read replicas of provider ma
 
 |Consumer|Why Not?|What To Use Instead|
 |---|---|---|
-|**Dispatch Engine**|Needs guaranteed fresh data for assignment decisions|Maintains its own Postgres cache by subscribing to `Device.Heartbeat`, `Robots.StateChange`, etc.|
+|**Dispatch Engine**|Needs guaranteed fresh data for assignment decisions|Maintains its own Postgres cache by subscribing to `Device.Heartbeat`, `Trip.*`, `FoTask.*`, `Deployment.*` events. Derives availability from domain facts (`healthy`, `hasActiveTrip`, `needsMaintenance`).|
 |**Integrations Service**|Pushing real-time updates to partners (DoorDash/Uber)|Subscribe to source events (`Trip.StageChanged`, etc.); Query Fleet Service for provider vehicle IDs|
-|**Trip Monitor**|Real-time trip monitoring, needs immediate updates|Subscribe to source events|
-|**Automated Decision Systems**|Any system making critical decisions (grounding, assignments)|Subscribe to events and maintain own cache, or query authoritative sources|
+|**Trip Monitor**|Real-time trip monitoring, needs immediate updates|Subscribe to source events. Already knows trips internally.|
+|**Automated Decision Systems**|Any system making critical decisions (grounding, assignments)|Subscribe to domain events and maintain own cache, or query authoritative source services directly.|
+
+**Important:** Services needing robot operational status must NOT query Fleet Device Service for `FleetDeviceStatus`. They should subscribe to domain events and derive status based on their specific business needs. `FleetDeviceStatus` is a display-optimized aggregate for human interfaces, not a source of truth for service-to-service decisions.
 
 **Note on Fleet Service (Go-based) vs Fleet Device Service:**
 
@@ -927,11 +903,11 @@ The device shadow currently contains a mix of physical device state and business
 
 |Shadow Field|Purpose|Controls|Current Owner|Future Owner|
 |---|---|---|---|---|
-|`operation_state`|Robot operational mode|Lights, sounds, OTA permissions|Operations Service via shadow|**Should be explicit state fields**|
-|`dp_needs_maintenance`|Maintenance flag from backend|Lights (maintenance pattern)|Operations Service via shadow|Operations Service via shadow (keep initially)|
-|`autonomy_allowed`|Permission for autonomous driving|Autopilot enable/disable|Operations Service via shadow|Operations Service via shadow (keep initially)|
-|`pin_unlock`|Magic Lid PIN|Lid unlock|State Service|Lid Service (renamed from State Service)|
-|`battery_heater_on`|Battery thermal control|Battery heater|Operations Service via shadow|Operations Service via shadow (keep initially)|
+|`operation_state`|Robot operational mode|Lights, sounds, OTA permissions|Operations Service via shadow|**Remove. Replace with explicit fields: `light_mode`, `sound_profile`, `ota_enabled`**|
+|`dp_needs_maintenance`|Maintenance flag from backend|Lights (maintenance pattern)|Operations Service via shadow|Operations Service via shadow|
+|`autonomy_allowed`|Permission for autonomous driving|Autopilot enable/disable|Operations Service via shadow|Operations Service via shadow|
+|`pin_unlock`|Magic Lid PIN|Lid unlock|State Service|Lid Service|
+|`battery_heater_on`|Battery thermal control|Battery heater|Operations Service via shadow|Operations Service via shadow|
 
 **Physical/Hardware States (Should Stay):**
 
@@ -959,7 +935,7 @@ Currently, `operation_state` (values: `ON_TRIP`, `PARKED`, `GROUNDED`, `OFF_DUTY
 3. **OTA Permitter**: Only allows OTA updates in `OFF_DUTY`
 4. **Heartbeat Reporting**: Included in `CocoState` message sent to backend
 
-This violates the principle that **Device Service should be business-agnostic**. The robot doesn't care about "trips" or "operations" — it cares about "what lights to show" and "what sounds to play."
+This violates the principle that **Device Service should be business-agnostic**. The robot doesn't care about "trips" or "operations" - it cares about "what lights to show" and "what sounds to play."
 
 ### Proposed Solution: Explicit State Fields
 
@@ -978,8 +954,14 @@ message DeviceShadowDesired {
   bool ota_enabled = 4;               // Is OTA currently allowed?
   bool battery_heater_on = 5;         // Thermal management
 
-  // Temporary: will migrate to Lid Service
-  string pin_unlock = 99;             // Magic Lid PIN (DEPRECATED - see migration plan)
+  // Additional explicit controls (replaces operation_state dependencies)
+  bool cameras_powered = 6;           // Should cameras remain powered?
+  PinUnlockMode pin_unlock_mode = 7;  // PIN unlock behavior
+  RecordingMode recording_mode = 8;   // Video/rosbag recording behavior
+  bool gps_active_mode = 9;           // GPS should be in active tracking mode
+
+  // Temporary: Remove after Magic Lid migrates to server-side validation
+  string pin_unlock = 99;
 }
 
 enum LightMode {
@@ -998,28 +980,38 @@ enum SoundProfile {
   SOUND_PROFILE_SILENT = 3;     // No sounds (was GROUNDED/OFF_DUTY)
 }
 
+enum PinUnlockMode {
+  PIN_UNLOCK_MODE_UNSPECIFIED = 0;
+  PIN_UNLOCK_MODE_ENABLED = 1;    // PIN unlock allowed (was PARKED)
+  PIN_UNLOCK_MODE_DISABLED = 2;   // PIN unlock blocked (was SERVICE, GROUNDED)
+}
+
+enum RecordingMode {
+  RECORDING_MODE_UNSPECIFIED = 0;
+  RECORDING_MODE_ACTIVE = 1;      // Full recording (was ON_TRIP)
+  RECORDING_MODE_STANDBY = 2;     // Reduced recording (was PARKED)
+  RECORDING_MODE_OFF = 3;         // No recording (was OFF_DUTY)
+}
+
 ```
 
-### Migration Strategy
+### Required Changes
 
-**Phase 1: Keep `operation_state`, Add Explicit Fields (Parallel Run)**
+**Robot Software:**
 
-- Device Service continues to forward `operation_state` to shadow
-- Add new explicit fields (`light_mode`, `sound_profile`, etc.)
-- Operations Service writes both `operation_state` (for backward compat) and new fields
-- Robot code updated to prefer new fields, fall back to `operation_state`
+- Update lights controller to read `light_mode` instead of `operation_state`
+- Update sound effects to read `sound_profile` instead of `operation_state`  
+- Update OTA permitter to read `ota_enabled` instead of checking `operation_state === 'OFF_DUTY'`
+- Update camera power manager to read `cameras_powered` instead of `operation_state`
+- Update pin unlock logic to read `pin_unlock_mode` instead of `operation_state`
+- Update video/rosbag recording to read `recording_mode` instead of `operation_state`
+- Update GPS driver to read `gps_active_mode` instead of `operation_state`
+- Remove `operation_state` from `CocoState` heartbeat message
 
-**Phase 2: Robot Exclusively Uses Explicit Fields**
+**Operations Service:**
 
-- All robot code (lights, sounds, OTA) reads only new fields
-- `operation_state` still forwarded but not used by robot
-- Device Service still includes `operation_state` in `Device` proto for backward compat
-
-**Phase 3: Deprecate `operation_state`**
-
-- Remove `operation_state` from shadow writes
-- Device Service stops including it in `Device` proto
-- Full business-agnostic device layer achieved
+- Write explicit shadow fields (`light_mode`, `sound_profile`, `ota_enabled`, `cameras_powered`, `pin_unlock_mode`, `recording_mode`, `gps_active_mode`) instead of `operation_state`
+- Use business logic to compute these values (see "How Operations Service Decides Values" below)
 
 ### How Operations Service Decides Values
 
@@ -1028,15 +1020,22 @@ Operations Service owns the business logic for determining these explicit states
 ```tsx
 // Pseudo-code in Operations Service
 function computeDeviceShadowDesired(robot: Robot): DeviceShadowDesired {
+  // Use domain facts, NOT operationState
   const hasActiveTrip = robot.activeTrip != null;
   const hasPendingTasks = robot.pendingFoTasks.length > 0;
   const needsMaintenance = robot.selfGroundingFlags.some(f => f.active);
+  const isDeployed = robot.deployment != null;
+  const isInServiceMode = robot.serviceMode;
+  const tripJustEnded = robot.tripEndedAt && 
+    (Date.now() - robot.tripEndedAt < OTA_COOLDOWN_MS);
 
   // Business logic to determine light mode
   let lightMode = LightMode.LIGHT_MODE_STANDARD;
-  if (robot.operationalState === 'GROUNDED' || needsMaintenance) {
+  if (needsMaintenance) {
     lightMode = LightMode.LIGHT_MODE_MAINTENANCE;
-  } else if (robot.operationalState === 'OFF_DUTY') {
+  } else if (isInServiceMode) {
+    lightMode = LightMode.LIGHT_MODE_SERVICE;
+  } else if (!isDeployed) {
     lightMode = LightMode.LIGHT_MODE_OFF_DUTY;
   } else if (!hasActiveTrip) {
     lightMode = LightMode.LIGHT_MODE_PARKED;
@@ -1047,18 +1046,38 @@ function computeDeviceShadowDesired(robot: Robot): DeviceShadowDesired {
     ? SoundProfile.SOUND_PROFILE_ACTIVE
     : SoundProfile.SOUND_PROFILE_QUIET;
 
-  // Autonomy: only if not grounded and route assigned
+  // Autonomy: only if healthy and route assigned
   const autonomyEnabled = !needsMaintenance && robot.routeId != null;
 
-  // OTA: only when off-duty, on WiFi, not on trip
-  const otaEnabled = robot.operationalState === 'OFF_DUTY';
+  // OTA: only when safe (not on trip, not recently finished trip)
+  const otaEnabled = !hasActiveTrip && !tripJustEnded && !isDeployed;
+
+  // Cameras: on during trips or service mode
+  const camerasPowered = hasActiveTrip || isInServiceMode;
+
+  // PIN unlock: only when parked (not grounded/service)
+  const pinUnlockMode = (!needsMaintenance && !isInServiceMode && !hasActiveTrip)
+    ? PinUnlockMode.PIN_UNLOCK_MODE_ENABLED
+    : PinUnlockMode.PIN_UNLOCK_MODE_DISABLED;
+
+  // Recording: active during trips, standby when parked
+  const recordingMode = hasActiveTrip
+    ? RecordingMode.RECORDING_MODE_ACTIVE
+    : (isDeployed ? RecordingMode.RECORDING_MODE_STANDBY : RecordingMode.RECORDING_MODE_OFF);
+
+  // GPS active mode: only during trips
+  const gpsActiveMode = hasActiveTrip;
 
   return {
     light_mode: lightMode,
     sound_profile: soundProfile,
     autonomy_enabled: autonomyEnabled,
     ota_enabled: otaEnabled,
-    battery_heater_on: robot.location.temperature < 0 // Business rule
+    battery_heater_on: robot.location.temperature < 0, // Business rule
+    cameras_powered: camerasPowered,
+    pin_unlock_mode: pinUnlockMode,
+    recording_mode: recordingMode,
+    gps_active_mode: gpsActiveMode,
   };
 }
 
@@ -1070,17 +1089,21 @@ function computeDeviceShadowDesired(robot: Robot): DeviceShadowDesired {
 
 1. **Business-agnostic robot**: Robot doesn't know about "trips" or "operations"
 2. **Explicit contracts**: Clear what each field controls
-3. **Backward compatible**: Parallel run during migration
-4. **Single source of truth**: Operations Service owns business logic, Device Service owns shadow
-5. **Testable**: Easy to test "when maintenance flag set, lights should be maintenance mode"
-6. **Extensible**: Add new explicit fields without breaking existing ones
+3. **Single source of truth**: Operations Service owns business logic, Device Service owns shadow
+4. **Testable**: Easy to test "when maintenance flag set, lights should be maintenance mode"
+5. **Extensible**: Add new explicit fields without breaking existing ones
 
 ### Device Service API for Shadow Updates
 
-Device Service exposes shadow management via:
+Device Service exposes **per-field** shadow management RPCs. Each desired field has a paired update and get method:
 
-- `UpdateDeviceShadow(UpdateDeviceShadowRequest) → UpdateDeviceShadowResponse` - Write desired state
-- `GetDeviceShadow(GetDeviceShadowRequest) → GetDeviceShadowResponse` - Read current shadow
+- `UpdateLightMode` / `GetLightMode`
+- `UpdateSoundProfile` / `GetSoundProfile`
+- `UpdateAutonomyEnabled` / `GetAutonomyEnabled`
+- `UpdateOtaEnabled` / `GetOtaEnabled`
+- `UpdateBatteryHeaterOn` / `GetBatteryHeaterOn`
+
+PIN remains managed via `SetUnlockPin`/`ClearUnlockPin` until Magic Lid migrates to server-side validation.
 
 See [Device Shadow Messages](https://www.notion.so/Device-API-Redesign-2e386fd0dcab800bb35cdfd292620fb7?pvs=21) in the Complete API Definitions section for full proto definitions.
 
@@ -1090,7 +1113,7 @@ See [Device Shadow Messages](https://www.notion.so/Device-API-Redesign-2e386fd0d
 2. **Lid Service** (temporary) - Sets PIN for Magic Lid
 3. **Mission Control** - Manual overrides for testing/troubleshooting
 
-Operations Service calls `UpdateDeviceShadow` whenever it needs to change robot behavior based on business state changes.
+Operations Service calls the **field-specific update RPCs** whenever it needs to change robot behavior based on business state changes.
 
 ---
 
@@ -1105,19 +1128,22 @@ The current `RobotStateHistory.operationState` field tries to capture the robot'
 - It's **owned by Operations** but depends on data from Deliveries and Dispatch
 - Different consumers need different views of "status"
 
-**Solution:** Remove `operationState` as a concept. Instead:
+**Solution:** Remove `operationState` as a concept. Each service reports its own domain state via domain events. Services that need robot status derive it from domain-specific facts they already track.
 
-1. **Each service reports its own domain state:**
-    - Operations Service: "This robot has 3 pending FO tasks"
-    - Dispatch/Deliveries: "This robot is assigned to trip XYZ"
-    - Device Service: "This robot is online with 45% battery"
-2. **Fleet Device Service aggregates into high-level status:**
-    - Consumes events from all sources
-    - Computes derived `FleetDeviceStatus` enum (ON_TRIP, DEPLOYED, NEEDS_MAINTENANCE, etc.)
-    - This is a **read model** optimization, not authoritative state
-3. **Consumers query the appropriate source:**
-    - Need to know if robot has tasks? Query Operations Service
-    - Need high-level "is this robot available?" Query Fleet Device Service
+**Consumer Changes Required:**
+
+| Consumer | Current Approach | New Approach |
+|----------|-----------------|--------------|
+| **Dispatch Engine** | Reads `operationState` from `Robots.StateChange` to determine availability | Already tracks `needsMaintenance`, `hasFood`, `healthy`, `hasActiveTrip` in its supply cache. Derive availability from these domain facts. |
+| **Trip Monitor** | Checks `operationState === 'ON_TRIP'` to log warnings | Already knows active trips internally (creates them from `Trip.Created` events). Remove operationState check. |
+| **Fleet Service (Go)** | Stores `operationState` in DynamoDB | Subscribe to `Trip.*`, `FoTask.*`, `Deployment.*` events. Derive status for Uber from domain facts. |
+| **State Service** | Includes `operationState` in `IoT.Heartbeat` | Remove from heartbeat. Shadow updates use explicit fields (`light_mode`, `sound_profile`) instead. |
+| **Operations Service** | Publishes `operationState` in `Robots.StateChange` | Stop publishing `Robots.StateChange`. Publish domain events (`Trip.*`, `FoTask.*`, `Deployment.*`) instead. |
+| **Deliveries Service** | Sets `operationState: ON_TRIP` when robot loaded | Publish `Trip.StageChanged` or similar domain event. Other services derive status from trip events. |
+
+**Fleet Device Service's Role:**
+
+Fleet Device Service computes `FleetDeviceStatus` (ON_TRIP, DEPLOYED, NEEDS_MAINTENANCE, etc.) from domain events for **human-facing UIs only**. Machine services must NOT query Fleet Device Service-they derive their own status from the domain events they consume.
 
 ### Problem 2: Events vs Commands
 
@@ -1184,15 +1210,15 @@ _Semantic Business Events:_
 3. Rename to Lid Service (or keep name, clarify scope)
 4. Remove robot state machine from State Service
 
-### Phase 3.5: Operations Service Cleanup
+### Phase 3.5: Remove operationState
 
-1. Remove `RobotStateHistory.operationState` field
-2. Stop publishing `Robots.StateChange` event (replaced by domain events)
-3. Operations publishes only:
+1. Remove `RobotStateHistory.operationState` field from Operations Service
+2. Stop publishing `Robots.StateChange` event entirely-replaced by domain events:
     - `Trip.*` events for trip lifecycle
     - `FoTask.*` events for maintenance tasks
     - `Deployment.*` events for deployment state
-4. Remove aggregation logic that tried to compute robot status from multiple sources
+3. Remove aggregation logic that computed robot status from multiple sources
+4. Each consumer derives status from domain facts (see "Consumer Changes Required" table in State Management Cleanup section)
 
 ### Phase 4: Refactor Fleet Service
 
@@ -1210,36 +1236,15 @@ _Semantic Business Events:_
     - Delete bridge service
     - Delete Kafka topic `robot_platform_robot_updates_v1`
 
-### Phase 5: Device Shadow Migration (Separate Business from Physical State)
+### Phase 5: Device Shadow Cleanup
 
-**Note:** This phase can be done independently and in parallel with other phases. It's NOT a blocker for Phase 1-4.
+Replace `operation_state` in device shadow with explicit behavior fields:
 
-**Phase 5.1: Add Explicit Shadow Fields (Parallel Run)**
+1. Operations Service writes `light_mode`, `sound_profile`, `ota_enabled` instead of `operation_state`
+2. Robot code reads explicit fields instead of `operation_state`
+3. Robot is now business-agnostic - it knows about "lights" and "sounds", not "trips"
 
-1. Add `DeviceShadowDesired` message with explicit fields (`light_mode`, `sound_profile`, etc.) to Device Service proto
-2. Operations Service starts writing BOTH old (`operation_state`) and new fields (`light_mode`, `sound_profile`) to shadow
-3. Device Service includes both in `Device` message for backward compatibility
-4. Robot code updated to:
-    - Try reading new explicit fields first
-    - Fall back to `operation_state` if new fields not present
-    - Lights controller, sounds, OTA permitter all updated with fallback logic
-
-**Phase 5.2: Robot Code Migration**
-
-1. Validate robot behavior matches (compare lights, sounds, OTA permissions with old vs new fields)
-2. Remove fallback logic from robot - exclusively use new explicit fields
-3. `operation_state` still written by Operations Service but ignored by robot
-
-**Phase 5.3: Remove `operation_state` from Shadow (Final)**
-
-1. Operations Service stops writing `operation_state` to shadow
-2. Device Service removes `operation_state` from reported state (if it was ever there)
-3. Robot is now fully business-agnostic - it knows about "lights" and "sounds", not "trips"
-
-**Migration for `dp_needs_maintenance` and `autonomy_allowed`:**
-
-- These can stay in shadow initially (lower priority)
-- Future: migrate to explicit fields like `maintenance_light_enabled` and `autonomy_control_enabled`
+See "Device Shadow: Physical vs Business State" section for required changes.
 
 ### Phase 6: Cleanup
 
@@ -1254,7 +1259,7 @@ _Semantic Business Events:_
 ### Phase 6: Magic Lid Migration (Future)
 
 1. Migrate Magic Lid (4-digit PIN) flow to server-side validation
-    - Change firmware to send keypad entries without local validation
+    - Change firmware to send pin entries without local validation
     - Lid Service validates all PINs server-side (2-digit and 4-digit)
 2. Remove `SET_PIN` command from Device Service
 3. All PIN logic now exclusively in Lid Service
@@ -1293,9 +1298,17 @@ service DeviceService {
   // --- Commands (physical robot interaction) ---
   rpc SendCommand(SendCommandRequest) returns (SendCommandResponse);
 
-  // --- Device Shadow Management ---
-  rpc UpdateDeviceShadow(UpdateDeviceShadowRequest) returns (UpdateDeviceShadowResponse);
-  rpc GetDeviceShadow(GetDeviceShadowRequest) returns (GetDeviceShadowResponse);
+  // --- Device Shadow Management (per-field RPCs) ---
+  rpc UpdateLightMode(UpdateLightModeRequest) returns (UpdateLightModeResponse);
+  rpc GetLightMode(GetLightModeRequest) returns (GetLightModeResponse);
+  rpc UpdateSoundProfile(UpdateSoundProfileRequest) returns (UpdateSoundProfileResponse);
+  rpc GetSoundProfile(GetSoundProfileRequest) returns (GetSoundProfileResponse);
+  rpc UpdateAutonomyEnabled(UpdateAutonomyEnabledRequest) returns (UpdateAutonomyEnabledResponse);
+  rpc GetAutonomyEnabled(GetAutonomyEnabledRequest) returns (GetAutonomyEnabledResponse);
+  rpc UpdateOtaEnabled(UpdateOtaEnabledRequest) returns (UpdateOtaEnabledResponse);
+  rpc GetOtaEnabled(GetOtaEnabledRequest) returns (GetOtaEnabledResponse);
+  rpc UpdateBatteryHeaterOn(UpdateBatteryHeaterOnRequest) returns (UpdateBatteryHeaterOnResponse);
+  rpc GetBatteryHeaterOn(GetBatteryHeaterOnRequest) returns (GetBatteryHeaterOnResponse);
 
   // --- Temporary: Remove after Magic Lid migration ---
   rpc SetUnlockPin(SetUnlockPinRequest) returns (SetUnlockPinResponse);
@@ -1561,24 +1574,99 @@ message ClearUnlockPinResponse {
 // Device Shadow Messages
 // ====================================================
 
-message UpdateDeviceShadowRequest {
-  string name = 1;
-  DeviceShadowDesired desired = 2;
+message UpdateLightModeRequest {
+  string name = 1; // "devices/{serial_number}"
+  LightMode light_mode = 2;
 }
 
-message UpdateDeviceShadowResponse {
+message UpdateLightModeResponse {
   int32 version = 1; // Shadow version number from AWS IoT
   google.protobuf.Timestamp updated_at = 2;
 }
 
-message GetDeviceShadowRequest {
+message GetLightModeRequest {
   string name = 1; // "devices/{serial_number}"
 }
 
-message GetDeviceShadowResponse {
-  DeviceShadowDesired desired = 1; // What backend wants robot to do
-  DeviceShadowReported reported = 2; // What robot reports it's doing
-  int32 version = 3;
+message GetLightModeResponse {
+  LightMode light_mode = 1;
+  int32 version = 2;
+}
+
+message UpdateSoundProfileRequest {
+  string name = 1; // "devices/{serial_number}"
+  SoundProfile sound_profile = 2;
+}
+
+message UpdateSoundProfileResponse {
+  int32 version = 1;
+  google.protobuf.Timestamp updated_at = 2;
+}
+
+message GetSoundProfileRequest {
+  string name = 1; // "devices/{serial_number}"
+}
+
+message GetSoundProfileResponse {
+  SoundProfile sound_profile = 1;
+  int32 version = 2;
+}
+
+message UpdateAutonomyEnabledRequest {
+  string name = 1; // "devices/{serial_number}"
+  bool autonomy_enabled = 2;
+}
+
+message UpdateAutonomyEnabledResponse {
+  int32 version = 1;
+  google.protobuf.Timestamp updated_at = 2;
+}
+
+message GetAutonomyEnabledRequest {
+  string name = 1; // "devices/{serial_number}"
+}
+
+message GetAutonomyEnabledResponse {
+  bool autonomy_enabled = 1;
+  int32 version = 2;
+}
+
+message UpdateOtaEnabledRequest {
+  string name = 1; // "devices/{serial_number}"
+  bool ota_enabled = 2;
+}
+
+message UpdateOtaEnabledResponse {
+  int32 version = 1;
+  google.protobuf.Timestamp updated_at = 2;
+}
+
+message GetOtaEnabledRequest {
+  string name = 1; // "devices/{serial_number}"
+}
+
+message GetOtaEnabledResponse {
+  bool ota_enabled = 1;
+  int32 version = 2;
+}
+
+message UpdateBatteryHeaterOnRequest {
+  string name = 1; // "devices/{serial_number}"
+  bool battery_heater_on = 2;
+}
+
+message UpdateBatteryHeaterOnResponse {
+  int32 version = 1;
+  google.protobuf.Timestamp updated_at = 2;
+}
+
+message GetBatteryHeaterOnRequest {
+  string name = 1; // "devices/{serial_number}"
+}
+
+message GetBatteryHeaterOnResponse {
+  bool battery_heater_on = 1;
+  int32 version = 2;
 }
 
 // Desired state: Cloud → Robot (business logic controls)
@@ -1590,11 +1678,8 @@ message DeviceShadowDesired {
   bool ota_enabled = 4;
   bool battery_heater_on = 5;
 
-  // DEPRECATED: Will migrate to Lid Service after Magic Lid server-side validation
+  // Temporary: Remove after Magic Lid migrates to server-side validation
   string pin_unlock = 99;
-  // DEPREACTED: Will remove this after the robot software code is updated to 
-  // handle new shadow fields
-  OperationState operation_state = 100;
 }
 
 // Reported state: Robot → Cloud (physical/computed state)
@@ -1693,6 +1778,7 @@ message FleetDeviceStatus {
     NEEDS_MAINTENANCE = 5;
     UNDER_MAINTENANCE = 6;
     OFFLINE = 7;
+    EMERGENCY_STOP = 8;
     OTHER = 100;
   }
   Status status = 1;
@@ -1972,8 +2058,11 @@ CREATE TABLE fleet_devices_view (
     active_lid_cycle_id UUID,
     active_lid_cycle_status VARCHAR(20),
 
-    -- From Operations Service
-    operation_state VARCHAR(50), -- ON_TRIP, PARKED, GROUNDED, OFF_DUTY
+    -- Derived status (computed from domain events, NOT from operationState)
+    status VARCHAR(50), -- ON_TRIP, DEPLOYED, NEEDS_MAINTENANCE, UNDER_MAINTENANCE, OFFLINE, etc.
+    status_reason VARCHAR(255), -- Human-readable explanation
+    
+    -- From Operations Service (domain facts, not aggregated state)
     active_trip_id UUID,
     active_trip_type VARCHAR(50),
     active_trip_stage VARCHAR(50),
@@ -1992,7 +2081,7 @@ CREATE TABLE fleet_devices_view (
     last_delivery_sync TIMESTAMPTZ
 );
 
-CREATE INDEX idx_fleet_devices_operation_state ON fleet_devices_view(operation_state);
+CREATE INDEX idx_fleet_devices_status ON fleet_devices_view(status);
 CREATE INDEX idx_fleet_devices_online ON fleet_devices_view(online);
 CREATE INDEX idx_fleet_devices_trip ON fleet_devices_view(active_trip_id);
 
@@ -2022,13 +2111,9 @@ CREATE INDEX idx_provider_mappings_provider ON provider_mappings(provider);
 4. **~~Dispatch Engine Integration~~**: ~~Does Dispatch Engine use Fleet Device Service or query Device Service directly for assignment decisions?~~
     - **ANSWERED**: Dispatch Engine does **NOT** use Fleet Device Service or Fleet Service. It maintains its own Postgres cache by:
         - Subscribing to `Device.Heartbeat` events for real-time telemetry
-        - Subscribing to `Robots.StateChange` events (currently) or `Trip.*` and `FoTask.*` events (future)
+        - Subscribing to `Trip.*`, `FoTask.*`, `Deployment.*` events for business state
         - Storing data in its own `Robot` table in Postgres
-        - Querying its own cache for assignment decisions
+        - Deriving availability from domain facts (`healthy`, `hasActiveTrip`, `needsMaintenance`)
 5. **Magic Lid Migration Timeline**: When do we plan to migrate Magic Lid to server-side validation? Should we do this before or after the Device Service rollout? This affects whether Device Service needs PIN commands at launch.
 6. **Fleet Service Persistence**: After refactoring Fleet Service to consume events, do we still need DynamoDB or can it be Redis-only? DynamoDB provides persistence/recovery but adds complexity. Redis-only is simpler but requires cache warming on restart.
 7. **Fleet Service Events**: Fleet Service should publish events when provider vehicle mappings change (e.g., `Fleet.ProviderMappingCreated`, `Fleet.ProviderMappingRemoved`) so Fleet Device Service can maintain its read replica. This requires adding event publishing to Fleet Service as part of the refactor.
-8. **Device Shadow Migration Timeline**: Should we migrate from `operation_state` to explicit shadow fields (`light_mode`, `sound_profile`, etc.) in Phase 1 or defer to later?
-    - **Option A**: Keep `operation_state` initially for faster Device Service rollout, migrate shadow later (Phase 5+)
-    - **Option B**: Migrate shadow fields as part of Device Service launch (more work upfront, cleaner separation)
-    - **Recommendation**: Option A - device shadow refactor is independent and can be done in parallel. Not a blocker for the core anti-corruption layer work.

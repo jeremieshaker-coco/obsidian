@@ -1,6 +1,6 @@
 # The Life of a Robot
 
-This document provides an exhaustive walkthrough of a Coco delivery robot's complete lifecycle—from deployment in the morning through end-of-day pickup. It covers all the operational phases, failure modes, maintenance scenarios, and recovery mechanisms that make up a robot's daily life.
+This document provides an exhaustive walkthrough of a Coco delivery robot's complete lifecycle-from deployment in the morning through end-of-day pickup. It covers all the operational phases, failure modes, maintenance scenarios, and recovery mechanisms that make up a robot's daily life.
 
 ---
 
