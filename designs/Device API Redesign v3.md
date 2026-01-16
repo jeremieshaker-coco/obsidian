@@ -197,8 +197,8 @@ async function deriveOperationalState(serial: string): Promise<RobotOperationalS
 ### Dimension Relationships
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     VALID STATE COMBINATIONS                     │
+┌────────────────────────────────────────────────────────────────┐
+│                     VALID STATE COMBINATIONS                   │
 ├─────────────────┬─────────────┬──────────┬─────────────────────┤
 │ deployment      │ trip        │ grounded │ operation_state     │
 │                 │             │          │ (legacy)            │
@@ -211,7 +211,7 @@ async function deriveOperationalState(serial: string): Promise<RobotOperationalS
 │ DEPLOYED        │ ON_TRIP     │ true     │ GROUNDED            │
 ├─────────────────┴─────────────┴──────────┴─────────────────────┤
 │ Note: UNDEPLOYED + ON_TRIP is invalid (trip implies deployed)  │
-└─────────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Behavior: Grounding Preserves Deployment

@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "tasks/Device Events Refactoring.md",
+                "file": "designs/Device API Redesign v3.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Device Events Refactoring"
+              "title": "Device API Redesign v3"
             }
           },
           {
@@ -209,7 +209,11 @@
   },
   "active": "21b796371860b777",
   "lastOpenFiles": [
+    "tmp/diff.md",
     "designs/Device API Redesign v3.md",
+    "tmp/diff.txt",
+    "tmp",
+    "research/DEVICE_EVENTS_ENDPOINTS.md",
     "tasks/Device Events Refactoring.md",
     "designs/Device API Redesign v2.md",
     "research/SYSTEM_ARCHITECTURE.md",
@@ -233,8 +237,6 @@
     "reference/table/Microservices Database Pattern.md",
     "reference/table/ExternalState Table.md",
     "reference/table/Attempt Table.md",
-    "reference/table/AttemptStatus Enum.md",
-    "reference/table/Database Architecture Overview.md",
     "reference/table",
     "savedchats",
     "Users/jeremieshaker",
@@ -242,8 +244,6 @@
     "designs/device_api.proto",
     "goals",
     "proposals",
-    "requirements",
-    "tasks",
-    "research"
+    "requirements"
   ]
 }
