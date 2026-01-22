@@ -1,5 +1,5 @@
 diff --git a/lib/common/src/exchanges/payload.types.ts b/lib/common/src/exchanges/payload.types.ts
-index 8ed3c12a2d..11a5b21b28 100644
+index 8ed3c12a2d..2d5605c07d 100644
 --- a/lib/common/src/exchanges/payload.types.ts
 +++ b/lib/common/src/exchanges/payload.types.ts
 @@ -401,6 +401,7 @@ export interface DeviceGpsLocation {
@@ -10,6 +10,55 @@ index 8ed3c12a2d..11a5b21b28 100644
  }
  
  export interface DeviceBatterySnapshot {
+@@ -548,6 +549,13 @@ export interface DeviceCargoChangedEvent {
+   changedAt: number;
+ }
+ 
++// These TripEvents.* are intentionally separate from Operations.TripTransitioned:
++// - Design goal: events should be specific, action-oriented, and carry context (intent + timing).
++// - TripEvents.* are serial-routed (routing key = serial) and include timing/cargo fields:
++//   startedAt/resumedAt/cancelledAt/completedAt, hasCargo, and cancel reason.
++// - Operations.TripTransitioned is generic and repository-layered (DB state change only), with
++//   payload = Shared.TripWithTask + inRescueMode and routing key = tripType.tripStatus.stopType.
++// TODO: Consider unifying once TripTransitioned can carry action context (intent + timestamps).
+ export interface TripStartedEvent {
+   serial: string;
+   tripId: string;
+@@ -578,6 +586,10 @@ export interface TripCompletedEvent {
+   completedAt: number;
+ }
+ 
++// Added to publish deployment state at the service layer with location context.
++// Overlaps: `Names.Robots.Deployment` (`lib/common/src/exchanges/names.ts`),
++// `Names.State.TransitionCompleted` (`lib/common/src/exchanges/names.ts`).
++// TODO: consolidate overlapping robot-state/deployment signals into a single canonical event.
+ export interface DeploymentDeployedEvent {
+   serial: string;
+   locationId: string;
+@@ -591,6 +603,12 @@ export interface DeploymentUndeployedEvent {
+   endedAt: number;
+ }
+ 
++// Added to publish FO task effects on robot state (maintenance/pickup flags).
++// Overlaps: `Names.Operations.FoTaskCreated` (`lib/common/src/exchanges/names.ts`),
++// `Names.Operations.FoTaskStarted` (`lib/common/src/exchanges/names.ts`),
++// `Names.Operations.FoTaskCompleted` (`lib/common/src/exchanges/names.ts`),
++// `Names.Operations.FoTaskCanceled` (`lib/common/src/exchanges/names.ts`).
++// TODO: unify with other robot-state streams to reduce duplicate event types.
+ export interface FoTaskCreatedEvent {
+   serial: string;
+   taskId: string;
+@@ -613,6 +631,10 @@ export interface FoTaskUpdatedEvent {
+   undergoingMaintenance?: boolean;
+ }
+ 
++// Added to publish delivery load/unload as explicit robot state signals.
++// Overlaps: `Names.Deliveries.AttemptTransitioned` (`lib/common/src/exchanges/names.ts`),
++// `Names.Deliveries.ProviderUpdated` (`lib/common/src/exchanges/names.ts`).
++// TODO: converge delivery/robot-state events so this can be removed.
+ export interface DeliveryLoadedEvent {
+   serial: string;
+   deliveryId: string;
 diff --git a/service/deliveries/src/modules/delivery/service/delivery.service.ts b/service/deliveries/src/modules/delivery/service/delivery.service.ts
 index 20bbcec87f..9d6c61dc16 100644
 --- a/service/deliveries/src/modules/delivery/service/delivery.service.ts

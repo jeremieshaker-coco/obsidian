@@ -1,11 +1,24 @@
-# Device API Redesign v3
+Author: @Jeremie Shaker
 
-> **Summary**: This design supersedes v2 by introducing a cleaner separation of concerns:
-> 1. **Three orthogonal dimensions**: Deployment status, trip status, and operational status (grounded)
-> 2. **Issues as the grounding mechanism**: `grounded` is derived from active device issues, not a commanded state
-> 3. **Device Issues module in Operations Service**: Not a separate service, but a new module with shared DB access
-> 4. **Semantic actions for UIs**: Replace low-level state transitions with business-meaningful operations
-> 5. **Simplified event-sourced state**: `RobotStateHistory` becomes audit-only; operational state is derived from source-of-truth tables
+Co-Authors: @Alexander Hansen, @Christie Mathews
+
+Last Updated: January 13, 2026
+
+### Related docs
+
+- [Device API Design - Robot Software Interface](https://www.notion.so/Device-API-Design-Robot-Software-Interface-2e386fd0dcab80e584fdd5255f3456f9?pvs=21)
+- [Pitfalls for Device Event handling](https://www.notion.so/Pitfalls-for-Device-Event-handling-2d386fd0dcab806b92bff78ff40dffb0?pvs=21)
+- [Device Events Producers and Consumers](https://www.notion.so/Device-Events-Producers-and-Consumers-2e786fd0dcab80fea99fd3bca6a07c51?pvs=21)
+- [The tendrils of Operation State](https://www.notion.so/The-tendrils-of-Operation-State-2e886fd0dcab80558a23dcd99de253e6?pvs=21)
+- [Cargo Detection](https://www.notion.so/Cargo-Detection-2db86fd0dcab80639706fddf93b24280?pvs=21)
+
+## Summary
+
+This design proposes the following changes:
+
+- Centralizing all communications between the delivery platform and external components such as AWS IoT, Greengrass and DriveU.
+- Deconstructing the composite state that is captured by `OperationState` into granular pieces of state: deployment status, trip status, and issues.
+- Refactoring events and endpoints to use Semantic actions: When services communicate between one another, they should speak in terms of concepts that are relevant to the business rather than describing what database operations are happening.
 
 ---
 
@@ -13,27 +26,27 @@
 
 Our current device state management has several architectural issues:
 
-- **Fragmented State Ownership**: Device state is scattered across multiple services with no single source of truth
-- **Tight Coupling to External Systems**: Multiple services directly consume raw MQTT events
-- **Blurred Service Boundaries**: Services have overlapping responsibilities
-- **Conflated State Dimensions**: `operation_state` tries to encode deployment, maintenance and trip status in a single enum
-- **Event-sourced flags that should be derived**: Fields like `needsMaintenance`, `needsMovement`, and `driveable` are stored when they could be computed
-- **Unused fields**: `driveable` is never set in production code
+- **Fragmented State Ownership**: Device state is scattered across multiple services with no single source of truth. Services have overlapping responsibilities. See [Robot State Change Fiasco](https://www.notion.so/Robot-State-Change-Fiasco-24986fd0dcab80b3a44ec185f6d4af38?pvs=21).
+- **Complex state machines:** `operation_state` tries to encode deployment, maintenance and trip status in a single enum, and the `state` service _owns_ the transitions between different operation states. The fact that state transitions can fail, combined with the fact that these state transitions are triggered by asynchronous events, makes it such that invalid state transitions are largely unhandled. These state transitions can be triggered by MRO UI, MC UI and a number of events coming different services.
+- **Leaky Abstractions:** The messages and endpoints used to communicate between endpoint often leak implementation details.
+    - Example: MRO can request a device _to transition state to off duty_. Instead MRO should _mark an issue as resolved_, and if the device has no more issues it will automatically transition from grounded to off duty.
+    - Example: Deliveries emits a `Robots.StateChange` to signal that marks the robot `hasFood` as false when the courier rescues the delivery, instead of emitting an event such as `CourierRescuedDelivery`.
 
 ### The Core Problem with `operation_state`
 
 The current `operation_state` enum (`OFF_DUTY`, `PARKED`, `ON_TRIP`, `GROUNDED`) conflates three orthogonal dimensions:
 
-| Dimension              | Values               | Meaning                              |
-| ---------------------- | -------------------- | ------------------------------------ |
-| **Deployment Status**  | UNDEPLOYED, DEPLOYED | Where is the robot in its lifecycle? |
-| **Operational Status** | OK, GROUNDED         | Can the robot operate?               |
-| **Trip Status**        | IDLE, ON_TRIP        | Is the robot currently on a trip?    |
+|Dimension|Values|Meaning|
+|---|---|---|
+|**Deployment Status**|UNDEPLOYED, DEPLOYED|Where is the robot in its lifecycle?|
+|**Operational Status**|OK, GROUNDED|Can the robot operate?|
+|**Trip Status**|TripStatus enum (or null)|What is the current trip lifecycle state?|
 
 This causes problems:
+
 - When a PARKED robot is grounded, we lose track that it was deployed
 - When ungrounded, operators must manually choose PARKED vs OFF_DUTY
-- The state machine enforces transitions that don't match business intent
+- The state machine enforces transitions that don’t match business intent
 
 ---
 
@@ -68,9 +81,9 @@ This causes problems:
 │  Publishes: Device.Heartbeat, Device.HealthDegraded, Device.HealthRestored  │
 │  Note: Absorbs telemetry/connectivity from current State Service            │
 └─────────────────────────────────────────────────────────────────────────────┘
-        │                                               
-        │ Device.HealthDegraded, Device.Heartbeat                        
-        ▼                                               
+        │
+        │ Device.HealthDegraded, Device.Heartbeat
+        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         OPERATIONS SERVICE                                  │
 │                                                                             │
@@ -99,9 +112,9 @@ This causes problems:
 │                   │         to write shadow    │                            │
 │                   └────────────────────────────┘                            │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                      
+
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    LID SERVICE (née State Service)                          │
+│                    LID SERVICE (fka State Service)                          │
 │                                                                             │
 │  Owns: Lid cycles, PIN entry flows                                          │
 │  Publishes: LidCycle.*, Robots.PinEntry                                     │
@@ -111,16 +124,16 @@ This causes problems:
 
 ### Service Boundary Changes
 
-| Current Service | New Service | What Moves |
-|-----------------|-------------|------------|
-| State Service | **Device Service** (new) | Telemetry, connectivity, component health, shadow writes |
-| State Service | **Lid Service** (renamed) | Lid cycles, PIN entry |
-| State Service | **Operations Service** | Operation state logic, state machine (becomes issue-based) |
+|Current Service|New Service|What Moves|
+|---|---|---|
+|State Service|**Device Service** (new)|Telemetry, connectivity, component health, shadow writes|
+|State Service|**Lid Service** (renamed)|Lid cycles, PIN entry|
+|State Service|**Operations Service**|Operation state logic, state machine (becomes issue-based)|
 
 ### Why Device Issues Module Lives in Operations Service
 
 1. **Shared context**: Issues often trigger FO tasks (which Operations already owns)
-2. **Related patterns**: Operations already has `FoAssistanceRequest`, `FoTask` 
+2. **Related patterns**: Operations already has `FoAssistanceRequest`, `FoTask`
 3. **Simpler infrastructure**: No new service to deploy/monitor
 4. **Transactional operations**: Can create issue + FO task in single transaction
 
@@ -130,17 +143,17 @@ This causes problems:
 
 ### The Three Dimensions
 
-```typescript
+```tsx
 interface RobotOperationalState {
   // Dimension 1: Deployment lifecycle
   deployment_status: 'UNDEPLOYED' | 'DEPLOYED';
-  
-  // Dimension 2: Trip lifecycle  
-  trip_status: 'IDLE' | 'ON_TRIP';
-  
+
+  // Dimension 2: Trip lifecycle
+  trip_status: TripStatus | null;
+
   // Dimension 3: Operational status (derived from issues)
   grounded: boolean;
-  
+
   // Derived for backward compatibility with robot firmware
   operation_state: 'OFF_DUTY' | 'PARKED' | 'ON_TRIP' | 'GROUNDED';
 }
@@ -149,50 +162,6 @@ interface RobotOperationalState {
 ### Derivation Logic
 
 All operational flags are **computed from source-of-truth tables**, not stored:
-
-```typescript
-// Operations Service - Operational State Deriver
-async function deriveOperationalState(serial: string): Promise<RobotOperationalState> {
-  // Query source-of-truth tables
-  const [deployment, trip, issues, foTasks] = await Promise.all([
-    deploymentRepo.getActiveDeployment(serial),
-    tripRepo.getActiveTrip(serial),
-    deviceIssuesRepo.listActiveIssues(serial),
-    foTasksRepo.getActiveTasks(serial),
-  ]);
-  
-  // Compute dimensions from facts
-  const deploymentStatus = deployment ? 'DEPLOYED' : 'UNDEPLOYED';
-  const tripStatus = trip ? 'ON_TRIP' : 'IDLE';
-  const grounded = issues.some(i => i.grounds_robot);
-  
-  // Derive additional flags (replaces stored needsMaintenance, etc.)
-  const needsMaintenance = issues.some(i => i.severity === 'WARNING') || 
-                           foTasks.some(t => t.state === 'PENDING');
-  const undergoingMaintenance = foTasks.some(t => t.state === 'IN_PROGRESS');
-  
-  // Legacy operation_state derivation
-  let operationState: string;
-  if (grounded) {
-    operationState = 'GROUNDED';
-  } else if (tripStatus === 'ON_TRIP') {
-    operationState = 'ON_TRIP';
-  } else if (deploymentStatus === 'DEPLOYED') {
-    operationState = 'PARKED';
-  } else {
-    operationState = 'OFF_DUTY';
-  }
-  
-  return {
-    deployment_status: deploymentStatus,
-    trip_status: tripStatus,
-    grounded,
-    needs_maintenance: needsMaintenance,
-    undergoing_maintenance: undergoingMaintenance,
-    operation_state: operationState,
-  };
-}
-```
 
 ### Dimension Relationships
 
@@ -203,25 +172,28 @@ async function deriveOperationalState(serial: string): Promise<RobotOperationalS
 │ deployment      │ trip        │ grounded │ operation_state     │
 │                 │             │          │ (legacy)            │
 ├─────────────────┼─────────────┼──────────┼─────────────────────┤
-│ UNDEPLOYED      │ IDLE        │ false    │ OFF_DUTY            │
-│ UNDEPLOYED      │ IDLE        │ true     │ GROUNDED            │
-│ DEPLOYED        │ IDLE        │ false    │ PARKED              │
-│ DEPLOYED        │ IDLE        │ true     │ GROUNDED            │
-│ DEPLOYED        │ ON_TRIP     │ false    │ ON_TRIP             │
-│ DEPLOYED        │ ON_TRIP     │ true     │ GROUNDED            │
+│ UNDEPLOYED      │ null        │ false    │ OFF_DUTY            │
+│ UNDEPLOYED      │ null        │ true     │ GROUNDED            │
+│ DEPLOYED        │ null        │ false    │ PARKED              │
+│ DEPLOYED        │ null        │ true     │ GROUNDED            │
+│ DEPLOYED        │ READY_TO_DEPART/IN_TRANSIT/AT_STOP │ false │ ON_TRIP   │
+│ DEPLOYED        │ READY_TO_DEPART/IN_TRANSIT/AT_STOP │ true  │ GROUNDED │
 ├─────────────────┴─────────────┴──────────┴─────────────────────┤
-│ Note: UNDEPLOYED + ON_TRIP is invalid (trip implies deployed)  │
+│ Note: UNDEPLOYED + active trip status is invalid (trip implies deployed)  |
+| Undeploying when trip.status is active should fail                        │
 └────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Behavior: Grounding Preserves Deployment
 
 When a robot is grounded:
+
 - `deployment_status` remains unchanged (still DEPLOYED if it was deployed)
 - `grounded` becomes `true`
 - `operation_state` becomes `GROUNDED` (for backward compat)
 
 When issues are cleared:
+
 - `grounded` becomes `false`
 - `operation_state` returns to the deployment-based value (PARKED, OFF_DUTY, etc.)
 - **No manual state selection required**
@@ -231,13 +203,13 @@ Timeline:
 ─────────────────────────────────────────────────────────────────────────────
 Robot deployed to parking lot
   deployment_status: DEPLOYED
-  trip_status: IDLE
+  trip_status: null
   grounded: false
   operation_state: PARKED
                          │
                          ▼ GPS fault detected, issue raised
   deployment_status: DEPLOYED  (unchanged!)
-  trip_status: IDLE            (unchanged!)
+  trip_status: null            (unchanged!)
   grounded: true
   operation_state: GROUNDED
                          │
@@ -257,12 +229,14 @@ Robot deployed to parking lot
 This is a **new service** that absorbs telemetry/connectivity responsibilities from the current State Service.
 
 **What it owns:**
+
 - Device shadow (physical state)
 - Device registry (serial numbers, hardware metadata)
 - Connectivity status (online/offline, DriveU status)
 - Component health snapshots (physical facts, not interpretations)
 
 **What it does:**
+
 - Consumes raw MQTT heartbeats from SQS
 - Consumes DriveU webhooks
 - Normalizes and persists device state
@@ -270,27 +244,28 @@ This is a **new service** that absorbs telemetry/connectivity responsibilities f
 - **Writes shadow fields when instructed** (by Operations Service)
 
 **What it does NOT do:**
-- Create or manage issues (that's Operations Service's Device Issues module)
+
+- Create or manage issues (that’s Operations Service’s Device Issues module)
 - Make business decisions about grounding
 - Derive operational state
 
 **Events Published:**
 
-| Event                      | Trigger                            | Purpose                                                      | Consumers |
-| -------------------------- | ---------------------------------- | ------------------------------------------------------------ | --------- |
-| `Device.Heartbeat`         | Every processed heartbeat (~5-10s) | Full state snapshot for cache builders                       | **Dispatch Engine**: Update robot supply cache (location, battery, service codes) for assignment decisions<br/>**Fleet Service**: Update Redis/DynamoDB cache for Uber position updates<br/>**Trip Monitor**: Update trip trace, recalculate ETA<br/>**Operations Service**: Update Redis ephemeral state |
-| `Device.Moved`             | Location changed > 10m             | Route tracking, geofence detection                           | **Trip Monitor**: Route deviation detection, arrival detection<br/>**Operations Service**: Geofence checks (entering/leaving service areas) |
-| `Device.LidOpened`         | Lid state: closed → open           | Lid cycle tracking, security alerts                          | **Lid Service**: Start lid cycle, track open duration<br/>**Deliveries Service**: Track loading start time |
-| `Device.LidClosed`         | Lid state: open → closed           | Lid cycle tracking                                           | **Lid Service**: Complete lid cycle, emit `LidCycle.Completed`<br/>**Deliveries Service**: Trigger load completion if conditions met |
-| `Device.LidJammed`         | Lid mechanism reports fault        | Critical fault handling                                      | **Lid Service**: Abort lid cycle, alert operations<br/>**Operations Service**: Create urgent FO task<br/>**Deliveries Service**: Handle failed handoff scenario |
-| `Device.BatteryLow`        | Battery crosses 20% threshold      | Ops alerts, preemptive recharging                            | **Operations Service**: Create FO task for battery swap<br/>**Dispatch Engine**: Reduce robot availability score |
-| `Device.BatteryCritical`   | Battery crosses 5% threshold       | Critical ops alerts, trip safety                             | **Operations Service**: Ground robot, create urgent FO task<br/>**Dispatch Engine**: Remove from available supply<br/>**Trip Monitor**: Alert if robot is mid-trip |
-| `Device.ConnectivityChanged` | Online ↔ Offline transition      | Connectivity tracking                                        | **Operations Service**: Update robot connectivity status, potentially ground if offline too long<br/>**Dispatch Engine**: Remove/add to supply |
-| `Device.HealthDegraded`    | Component enters fault state       | Trigger for Device Issues module to potentially create issue | **Operations Service** (Device Issues module): Create issue based on component severity<br/>**Dispatch Engine**: Mark robot unhealthy, remove from supply |
-| `Device.HealthRestored`    | Component returns to OK            | Trigger for Device Issues module to potentially clear issue  | **Operations Service** (Device Issues module): Auto-clear issue if applicable<br/>**Dispatch Engine**: Mark robot healthy, add to supply |
-| `Device.EmergencyStop`     | Emergency stop button pressed      | Safety-critical response                                     | **Operations Service**: Immediately ground robot, create critical alert<br/>**Dispatch Engine**: Remove from supply immediately<br/>**Trip Monitor**: Pause trip, alert if mid-delivery |
-| `Device.PinEntry`          | Key pressed on device pin pad      | Lid unlock validation                                        | **Lid Service**: Validate PIN against active unlock context, decide whether to open lid |
-| `Device.CargoChanged`      | `hasCargo` state changes           | Replaces `hasFood` inference from lid events                 | **Operations Service**: Update cargo status for trip tracking<br/>**Deliveries Service**: Update delivery state<br/>**Dispatch Engine**: Update supply cache |
+|Event|Trigger|Purpose|Consumers|
+|---|---|---|---|
+|`Device.Heartbeat`|Every processed heartbeat (~5-10s)|Full state snapshot for cache builders|**Dispatch Engine**: Update robot supply cache (location, battery, service codes) for assignment decisions**Fleet Service**: Update Redis/DynamoDB cache for Uber position updates**Trip Monitor**: Update trip trace, recalculate ETA**Operations Service**: Update Redis ephemeral state|
+|`Device.Moved`|Location changed > 10m|Route tracking, geofence detection|**Trip Monitor**: Route deviation detection, arrival detection**Operations Service**: Geofence checks (entering/leaving service areas)|
+|`Device.LidOpened`|Lid state: closed → open|Lid cycle tracking, security alerts|**Lid Service**: Start lid cycle, track open duration**Deliveries Service**: Track loading start time|
+|`Device.LidClosed`|Lid state: open → closed|Lid cycle tracking|**Lid Service**: Complete lid cycle, emit `LidCycle.Completed`**Deliveries Service**: Trigger load completion if conditions met|
+|`Device.LidJammed`|Lid mechanism reports fault|Critical fault handling|**Lid Service**: Abort lid cycle, alert operations**Operations Service**: Create urgent FO task**Deliveries Service**: Handle failed handoff scenario|
+|`Device.BatteryLow`|Battery crosses 20% threshold|Ops alerts, preemptive recharging|**Operations Service**: Create FO task for battery swap**Dispatch Engine**: Reduce robot availability score|
+|`Device.BatteryCritical`|Battery crosses 5% threshold|Critical ops alerts, trip safety|**Operations Service**: Ground robot, create urgent FO task**Dispatch Engine**: Remove from available supply**Trip Monitor**: Alert if robot is mid-trip|
+|`Device.ConnectivityChanged`|Online ↔︎ Offline transition|Connectivity tracking|**Operations Service**: Update robot connectivity status, potentially ground if offline too long**Dispatch Engine**: Remove/add to supply|
+|`Device.HealthDegraded`|Component enters fault state|Trigger for Device Issues module to potentially create issue|**Operations Service** (Device Issues module): Create issue based on component severity**Dispatch Engine**: Mark robot unhealthy, remove from supply|
+|`Device.HealthRestored`|Component returns to OK|Trigger for Device Issues module to potentially clear issue|**Operations Service** (Device Issues module): Auto-clear issue if applicable**Dispatch Engine**: Mark robot healthy, add to supply|
+|`Device.EmergencyStop`|Emergency stop button pressed|Safety-critical response|**Operations Service**: Immediately ground robot, create critical alert**Dispatch Engine**: Remove from supply immediately**Trip Monitor**: Pause trip, alert if mid-delivery|
+|`Device.PinEntry`|Key pressed on device pin pad|Lid unlock validation|**Lid Service**: Validate PIN against active unlock context, decide whether to open lid|
+|`Device.CargoChanged`|`hasCargo` state changes|Replaces `hasFood` inference from lid events|**Operations Service**: Update cargo status for trip tracking**Deliveries Service**: Update delivery state**Dispatch Engine**: Update supply cache|
 
 **Shadow Write API:**
 
@@ -298,31 +273,31 @@ This is a **new service** that absorbs telemetry/connectivity responsibilities f
 service DeviceService {
   // Shadow field updates (called by Operations Service)
   rpc SetShadowFields(SetShadowFieldsRequest) returns (SetShadowFieldsResponse);
-  
+
   // Individual field RPCs (for granular updates)
   rpc UpdateLightMode(UpdateLightModeRequest) returns (UpdateLightModeResponse);
   rpc UpdateSoundProfile(UpdateSoundProfileRequest) returns (UpdateSoundProfileResponse);
   rpc UpdateOtaEnabled(UpdateOtaEnabledRequest) returns (UpdateOtaEnabledResponse);
-  
+
   // Legacy: Will be removed after robot firmware migration
   rpc SetOperationState(SetOperationStateRequest) returns (SetOperationStateResponse);
 }
 
 message SetShadowFieldsRequest {
   string device_serial = 1;
-  
+
   // New explicit fields
   optional LightMode light_mode = 2;
   optional SoundProfile sound_profile = 3;
   optional bool ota_enabled = 4;
   optional bool autonomy_enabled = 5;
-  
+
   // Legacy field (deprecated, for backward compat only)
   optional string operation_state = 10;
 }
 ```
 
-**Device.* Event Protobuf Definitions:**
+__Device._ Event Protobuf Definitions:_*
 
 ```protobuf
 syntax = "proto3";
@@ -596,23 +571,25 @@ enum DriveUStreamerStatus {
 The current State Service becomes the **Lid Service**, focused solely on lid-related functionality.
 
 **What it owns:**
+
 - Lid cycles (open/close tracking)
 - PIN entry flows
 - Lid timeout management
 
 **What it does NOT do (moved to other services):**
+
 - Telemetry processing → Device Service
 - Connectivity tracking → Device Service
 - Operation state machine → Operations Service (replaced by issues)
 
 **Events Published:**
 
-| Event | Trigger | Purpose |
-|-------|---------|---------|
-| `LidCycle.Init` | Lid opened | Track loading/unloading started |
-| `LidCycle.Complete` | Lid closed | Track loading/unloading completed |
-| `LidCycle.Timeout` | Lid open too long | Alert for stuck lid |
-| `Robots.PinEntry` | PIN entered on keypad | Validate PIN, trigger lid action |
+|Event|Trigger|Purpose|
+|---|---|---|
+|`LidCycle.Init`|Lid opened|Track loading/unloading started|
+|`LidCycle.Complete`|Lid closed|Track loading/unloading completed|
+|`LidCycle.Timeout`|Lid open too long|Alert for stuck lid|
+|`Robots.PinEntry`|PIN entered on keypad|Validate PIN, trigger lid action|
 
 ---
 
@@ -637,25 +614,27 @@ service/operations/src/modules/
 ```
 
 **What it owns:**
+
 - Device issue lifecycle (raised → active → cleared)
 - Operator-raised issues
 - Association with FO assistance requests
 
 **What it does:**
+
 - Consumes `Device.HealthDegraded` events
 - Creates issues (with optional FO task creation in same transaction)
 - Can trigger FO task creation (via existing FO Tasks module)
 
 **Internal Events (within Operations Service):**
 
-| Event | Trigger | Purpose |
-|-------|---------|---------|
-| `DeviceIssue.Raised` | New issue created | Triggers state deriver to recompute grounded status |
-| `DeviceIssue.Cleared` | Issue resolved (operator or auto) | Triggers state deriver to recompute grounded status |
+|Event|Trigger|Purpose|
+|---|---|---|
+|`DeviceIssue.Raised`|New issue created|Triggers state deriver to recompute grounded status|
+|`DeviceIssue.Cleared`|Issue resolved (operator or auto)|Triggers state deriver to recompute grounded status|
 
-#### Issue Types and Severity
+### Issue Types and Severity
 
-```typescript
+```tsx
 enum IssueSeverity {
   WARNING = 'WARNING',     // Does NOT ground robot
   CRITICAL = 'CRITICAL',   // Grounds robot
@@ -669,18 +648,18 @@ const ISSUE_TYPES = {
   LTE_TIMEOUT: { severity: 'WARNING', grounds: false },
   CAMERA_FAULT: { severity: 'CRITICAL', grounds: true },
   SEGWAY_FAULT: { severity: 'SAFETY', grounds: true },
-  
+
   // Operator-raised issues
   MANUAL_GROUND: { severity: 'CRITICAL', grounds: true },
   SUSPICIOUS_BEHAVIOR: { severity: 'WARNING', grounds: false },
   UNDER_INVESTIGATION: { severity: 'CRITICAL', grounds: true },
-  
+
   // FO Assistance issues (linked to FoAssistanceRequest)
   FO_ASSISTANCE_REQUESTED: { severity: 'CRITICAL', grounds: true },
 };
 ```
 
-#### Issue Lifecycle
+### Issue Lifecycle
 
 ```
                            ┌────────────┐
@@ -703,15 +682,15 @@ const ISSUE_TYPES = {
             └─────────────┘            └─────────────┘ └─────────────┘
 ```
 
-#### FoAssistanceRequest Integration
+### FoAssistanceRequest Integration
 
 `FoAssistanceRequest` records are now **associated with issues**. When an FO assistance request with `needsGrounding = true` is created, a corresponding issue is also created:
 
-```typescript
+```tsx
 // When FoAssistanceRequest is created
 async function createFoAssistanceRequest(data: CreateFoRequestDto) {
   const foRequest = await foRequestRepo.create(data);
-  
+
   // If grounding is needed, create associated issue
   if (data.needsGrounding) {
     const issue = await deviceIssuesService.raiseIssue({
@@ -720,11 +699,11 @@ async function createFoAssistanceRequest(data: CreateFoRequestDto) {
       reason: data.notes,
       foAssistanceRequestId: foRequest.id,  // Link back
     });
-    
+
     // Update FO request with issue reference
     await foRequestRepo.update(foRequest.id, { issueId: issue.id });
   }
-  
+
   return foRequest;
 }
 ```
@@ -732,11 +711,12 @@ async function createFoAssistanceRequest(data: CreateFoRequestDto) {
 **Schema change for FoAssistanceRequest:**
 
 ```sql
-ALTER TABLE fo_assistance_requests 
+ALTER TABLE fo_assistance_requests
 ADD COLUMN issue_id UUID REFERENCES device_issues(id);
 ```
 
 This allows:
+
 - Grounding to be issue-based (consistent mechanism)
 - FO request context preserved (why was this issue created?)
 - Future migration: FO requests could become a type of issue
@@ -746,6 +726,7 @@ This allows:
 ### Operations Service (Enhanced)
 
 **What it owns:**
+
 - Trips lifecycle
 - Deployments lifecycle
 - FO Tasks lifecycle
@@ -755,33 +736,33 @@ This allows:
 
 **What it computes (from source tables):**
 
-| Field | Source | Derivation |
-|-------|--------|------------|
-| `deployment_status` | `RobotDeployment` | `deployment.isActive ? 'DEPLOYED' : 'UNDEPLOYED'` |
-| `trip_status` | `Trip` | `activeTrip ? 'ON_TRIP' : 'IDLE'` |
-| `grounded` | `device_issues` | `issues.some(i => i.grounds_robot)` |
-| `needs_maintenance` | `device_issues` + `FoTaskModel` | `issues.some(i => i.severity === 'WARNING') \|\| foTasks.some(...)` |
-| `undergoing_maintenance` | `FoTaskModel` | `foTasks.some(t => t.state === 'IN_PROGRESS')` |
-| `operation_state` | Derived | Priority: GROUNDED > ON_TRIP > PARKED > OFF_DUTY |
+|Field|Source|Derivation|
+|---|---|---|
+|`deployment_status`|`RobotDeployment`|`deployment.isActive ? 'DEPLOYED' : 'UNDEPLOYED'`|
+|`trip_status`|`Trip`|`trip?.status ?? null`|
+|`grounded`|`device_issues`|`issues.some(i => i.grounds_robot)`|
+|`needs_maintenance`|`device_issues` + `FoTaskModel`|`issues.some(i => i.severity === 'WARNING') \\|\\| foTasks.some(...)`|
+|`undergoing_maintenance`|`FoTaskModel`|`foTasks.some(t => t.state === 'IN_PROGRESS')`|
+|`operation_state`|Derived|Priority: GROUNDED > (active trip status) > PARKED > OFF_DUTY|
 
 **Events Published:**
 
-| Event | Trigger | Payload | Purpose |
-|-------|---------|---------|---------|
-| `Robot.OperationalStateChanged` | Any derived state change | `serial`, `deployment_status`, `grounded`, `on_trip`, `operation_state` (legacy) | Notify downstream services |
+|Event|Trigger|Payload|Purpose|
+|---|---|---|---|
+|`Robot.OperationalStateChanged`|Any derived state change|`serial`, `deployment_status`, `grounded`, `on_trip`, `operation_state` (legacy)|Notify downstream services|
 
 **State Computation Flow:**
 
-```typescript
+```tsx
 // Called whenever deployment, trip, issue, or FO task state changes
 async function recomputeAndPublishState(serial: string) {
   const state = await deriveOperationalState(serial);
-  
+
   // Compute behavior fields
   const lightMode = deriveLightMode(state);
   const soundProfile = deriveSoundProfile(state);
   const otaEnabled = deriveOtaEnabled(state);
-  
+
   // Write to shadow via Device Service
   await deviceService.setShadowFields(serial, {
     operation_state: state.operation_state,  // Legacy
@@ -789,7 +770,7 @@ async function recomputeAndPublishState(serial: string) {
     sound_profile: soundProfile,
     ota_enabled: otaEnabled,
   });
-  
+
   // Publish for downstream consumers
   await publish('Robot.OperationalStateChanged', {
     serial,
@@ -809,6 +790,7 @@ async function recomputeAndPublishState(serial: string) {
 ### Current State
 
 `RobotStateHistory` currently stores many fields that are forwarded via `Robots.StateChange`:
+
 - `operationState`
 - `needsMaintenance`
 - `undergoingMaintenance`
@@ -823,12 +805,14 @@ async function recomputeAndPublishState(serial: string) {
 `RobotStateHistory` becomes an **audit log** for tracking state changes over time. It is **NOT** used to derive current state.
 
 **Fields to keep (for audit):**
+
 - `operationState` - what state was the robot in
 - `hasFood` → replaced by `hasCargo` from device
 - `tripType` - what kind of trip
 - `createdAt` - when did this happen
 
 **Fields to remove:**
+
 - `driveable` - never used
 - `needsMaintenance` - now derived from issues
 - `needsMovement` - now derived from trip status
@@ -836,6 +820,7 @@ async function recomputeAndPublishState(serial: string) {
 - `needsPickup` - now derived from FO tasks
 
 **Usage change:**
+
 - **Before**: `getLatestRobotStateHistory()` to check `needsMaintenance`
 - **After**: `deriveOperationalState()` which queries source tables
 
@@ -846,15 +831,18 @@ async function recomputeAndPublishState(serial: string) {
 A parallel effort is adding `hasCargo` as a device-reported field, which replaces the current `hasFood` inference from lid events.
 
 **Current state:**
+
 - `hasFood` is set by Deliveries Service when robot is loaded
 - Requires inference from lid close events
 
 **New state:**
+
 - Robot publishes `hasCargo: boolean` in heartbeat
 - Device Service publishes `Device.CargoChanged` event
 - Operations Service (and others) consume this event
 
 **Benefits:**
+
 - More reliable (robot knows if cargo is present)
 - Simpler event flow (no inference needed)
 - Works for non-food cargo in future
@@ -863,31 +851,31 @@ A parallel effort is adding `hasCargo` as a device-reported field, which replace
 
 ## Field Ownership & Derivation Table
 
-| Field | Owner | Source/Derivation | Stored Where |
-|-------|-------|-------------------|--------------|
-| **Physical State (Facts)** ||||
-| `location` | Device Service | MQTT heartbeat | `devices.location` |
-| `battery_percent` | Device Service | MQTT heartbeat | `devices.batteries` |
-| `connectivity.online` | Device Service | IoT Core + DriveU | `devices.online` |
-| `lid_is_open` | Lid Service | MQTT events | `lid_cycles` |
-| `component_statuses[]` | Device Service | MQTT heartbeat | `device_components` |
-| `has_cargo` | Device Service | MQTT heartbeat (new) | `devices.has_cargo` |
-| **Issue State** ||||
-| `active_issues[]` | Operations Service | Device events + operators | `device_issues` table |
-| **Deployment State** ||||
-| `active_deployment` | Operations Service | Deployment lifecycle | `robot_deployments` table |
-| `active_trip` | Operations Service | Trip lifecycle | `trips` table |
-| **Derived State (NOT stored)** ||||
-| `deployment_status` | Operations Service | `deployment.isActive` | Computed |
-| `trip_status` | Operations Service | `trip != null` | Computed |
-| `grounded` | Operations Service | `issues.some(i => i.grounds_robot)` | Computed |
-| `needs_maintenance` | Operations Service | `issues.some(warning) \|\| foTasks.pending` | Computed |
-| `undergoing_maintenance` | Operations Service | `foTasks.some(in_progress)` | Computed |
-| **Shadow Desired (Written by Operations)** ||||
-| `operation_state` | Operations Service | **DEPRECATED** - computed for backward compat | Device shadow |
-| `light_mode` | Operations Service | Computed from operational state | Device shadow |
-| `sound_profile` | Operations Service | Computed from operational state | Device shadow |
-| `ota_enabled` | Operations Service | Computed from operational state | Device shadow |
+|Field|Owner|Source/Derivation|Stored Where|
+|---|---|---|---|
+|**Physical State (Facts)**||||
+|`location`|Device Service|MQTT heartbeat|`devices.location`|
+|`battery_percent`|Device Service|MQTT heartbeat|`devices.batteries`|
+|`connectivity.online`|Device Service|IoT Core + DriveU|`devices.online`|
+|`lid_is_open`|Lid Service|MQTT events|`lid_cycles`|
+|`component_statuses[]`|Device Service|MQTT heartbeat|`device_components`|
+|`has_cargo`|Device Service|MQTT heartbeat (new)|`devices.has_cargo`|
+|**Issue State**||||
+|`active_issues[]`|Operations Service|Device events + operators|`device_issues` table|
+|**Deployment State**||||
+|`active_deployment`|Operations Service|Deployment lifecycle|`robot_deployments` table|
+|`active_trip`|Operations Service|Trip lifecycle|`trips` table|
+|**Derived State (NOT stored)**||||
+|`deployment_status`|Operations Service|`deployment.isActive`|Computed|
+|`trip_status`|Operations Service|`trip?.status ?? null`|Computed|
+|`grounded`|Operations Service|`issues.some(i => i.grounds_robot)`|Computed|
+|`needs_maintenance`|Operations Service|`issues.some(warning) \\|\\| foTasks.pending`|Computed|
+|`undergoing_maintenance`|Operations Service|`foTasks.some(in_progress)`|Computed|
+|**Shadow Desired (Written by Operations)**||||
+|`operation_state`|Operations Service|**DEPRECATED** - computed for backward compat|Device shadow|
+|`light_mode`|Operations Service|Computed from operational state|Device shadow|
+|`sound_profile`|Operations Service|Computed from operational state|Device shadow|
+|`ota_enabled`|Operations Service|Computed from operational state|Device shadow|
 
 ---
 
@@ -898,40 +886,40 @@ A parallel effort is adding `hasCargo` as a device-reported field, which replace
 CREATE TABLE device_issues (
     id UUID PRIMARY KEY,
     device_serial VARCHAR(255) NOT NULL,
-    
+
     -- Issue identification
     issue_type VARCHAR(100) NOT NULL,
     source VARCHAR(50) NOT NULL,       -- DEVICE_HEALTH, OPERATOR, FO_REQUEST
-    severity VARCHAR(20) NOT NULL,     -- WARNING, CRITICAL, SAFETY
-    
+    severity VARCHAR(20) NOT NULL,     --WARNING, CRITICAL, SAFETY
+
     -- Grounding
     grounds_robot BOOLEAN NOT NULL,
-    
+
     -- State
     status VARCHAR(20) NOT NULL,       -- ACTIVE, CLEARED, AUTO_CLEARED
-    
+
     -- Content
     title VARCHAR(255) NOT NULL,
     description TEXT,
     reason TEXT,                       -- For MANUAL_GROUND
     component_name VARCHAR(100),       -- For device health issues
     fault_code VARCHAR(50),
-    
+
     -- Links
     fo_assistance_request_id UUID,     -- Link to FoAssistanceRequest if applicable
-    
+
     -- Audit
     raised_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     raised_by VARCHAR(255),            -- user_id or 'system'
     cleared_at TIMESTAMPTZ,
     cleared_by VARCHAR(255),
     clear_reason TEXT,
-    
-    CONSTRAINT issues_one_active_per_type UNIQUE (device_serial, issue_type) 
+
+    CONSTRAINT issues_one_active_per_type UNIQUE (device_serial, issue_type)
         WHERE status = 'ACTIVE'
 );
 
-CREATE INDEX idx_issues_device_active ON device_issues(device_serial) 
+CREATE INDEX idx_issues_device_active ON device_issues(device_serial)
     WHERE status = 'ACTIVE';
 ```
 
@@ -939,69 +927,114 @@ CREATE INDEX idx_issues_device_active ON device_issues(device_serial)
 
 ## API Design
 
-### Operations Service API (includes Device Issues)
+### Device Gateway API (gRPC-first)
+
+All device-related read/write operations should be exposed via gRPC in the new Device Gateway. HTTP endpoints (if any) should be thin gateway translations over gRPC, not separate implementations.
+
+**Key gRPC surface (representative, non-exhaustive):**
 
 ```protobuf
-service OperationsService {
-  // Deployment management
-  rpc CreateDeployment(CreateDeploymentRequest) returns (Deployment);
-  rpc EndDeployment(EndDeploymentRequest) returns (Deployment);
-  
-  // Device Issue management (via Device Issues module)
-  rpc RaiseDeviceIssue(RaiseDeviceIssueRequest) returns (DeviceIssue);
-  rpc ClearDeviceIssue(ClearDeviceIssueRequest) returns (DeviceIssue);
-  rpc GetDeviceIssue(GetDeviceIssueRequest) returns (DeviceIssue);
-  rpc ListDeviceIssues(ListDeviceIssuesRequest) returns (ListDeviceIssuesResponse);
-  
-  // Convenience methods (semantic actions)
-  rpc GroundRobot(GroundRobotRequest) returns (DeviceIssue);  // Creates MANUAL_GROUND issue
-  rpc UngroundRobot(UngroundRobotRequest) returns (UngroundRobotResponse);  // Clears grounding issues
-  
-  // Status queries (all derived, not stored)
-  rpc GetRobotOperationalState(GetRobotOperationalStateRequest) 
-      returns (RobotOperationalState);
+syntax = "proto3";
+
+package coco.devicegateway.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service DeviceGatewayService {
+  // Device reads
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  rpc GetDevice(GetDeviceRequest) returns (GetDeviceResponse);
+  rpc BatchGetDeviceGps(BatchGetDeviceGpsRequest) returns (BatchGetDeviceGpsResponse);
+  rpc GetLatestDeviceStates(GetLatestDeviceStatesRequest) returns (GetLatestDeviceStatesResponse);
+
+  // Heartbeat
+  rpc ListDeviceHeartbeatHistory(ListDeviceHeartbeatHistoryRequest)
+      returns (ListDeviceHeartbeatHistoryResponse);
+  rpc GetLatestDeviceHeartbeat(GetLatestDeviceHeartbeatRequest)
+      returns (GetLatestDeviceHeartbeatResponse);
+
+  // Device actions (individual RPCs; no generic SendCommand)
+  rpc OpenLid(OpenLidRequest) returns (OpenLidResponse);
+  rpc OpenLidWithContext(OpenLidWithContextRequest)
+      returns (OpenLidWithContextResponse);
+  rpc CloseLid(CloseLidRequest) returns (CloseLidResponse);
+  rpc SoftReset(SoftResetRequest) returns (SoftResetResponse);
+  rpc HardReset(HardResetRequest) returns (HardResetResponse);
+  rpc ModemReset(ModemResetRequest) returns (ModemResetResponse);
+  rpc SwitchSimBackup(SwitchSimBackupRequest) returns (SwitchSimBackupResponse);
+  rpc ResetGps(ResetGpsRequest) returns (ResetGpsResponse);
+  rpc SetLights(SetLightsRequest) returns (SetLightsResponse);
+  rpc SignalLoadFailure(SignalLoadFailureRequest) returns (SignalLoadFailureResponse);
+  rpc DoordashVerifyFailure(DoordashVerifyFailureRequest) returns (DoordashVerifyFailureResponse);
+  rpc StartWebRtcAuth(StartWebRtcAuthRequest) returns (StartWebRtcAuthResponse);
+
+  // State/Connectivity reads
+  rpc GetRobotOperationalState(GetRobotOperationalStateRequest) returns (GetRobotOperationalStateResponse);
+  rpc ListRobotStateHistory(ListRobotStateHistoryRequest) returns (ListRobotStateHistoryResponse);
+  rpc GetRobotConnectivityOverall(GetRobotConnectivityOverallRequest) returns (GetRobotConnectivityOverallResponse);
+  rpc ListRobotConnectivityHistory(ListRobotConnectivityHistoryRequest) returns (ListRobotConnectivityHistoryResponse);
+
+  // State writes
+  rpc RequestRobotStateTransition(RequestRobotStateTransitionRequest) returns (RequestRobotStateTransitionResponse);
+  rpc SetUnlockPin(SetUnlockPinRequest) returns (SetUnlockPinResponse);
+  rpc RemoveUnlockPin(RemoveUnlockPinRequest) returns (RemoveUnlockPinResponse);
+  rpc SetRouteId(SetRouteIdRequest) returns (SetRouteIdResponse);
 }
 
-message RaiseDeviceIssueRequest {
-  string device_serial = 1;
-  string issue_type = 2;              // e.g., "MANUAL_GROUND", "GPS_FAULT"
-  optional string reason = 3;         // For operator-raised issues
-  optional string description = 4;
-}
-
-message ClearDeviceIssueRequest {
-  string issue_id = 1;
-  string clear_reason = 2;
-}
-
-message GroundRobotRequest {
-  string device_serial = 1;
-  string reason = 2;
-  optional string description = 3;
-}
-
-message UngroundRobotRequest {
-  string device_serial = 1;
-  string clear_reason = 2;
-  optional bool clear_all_issues = 3;  // Clear all grounding issues
-  optional string issue_id = 4;        // Or clear specific issue
-}
-
-message RobotOperationalState {
-  string device_serial = 1;
-  DeploymentStatus deployment_status = 2;
-  TripStatus trip_status = 3;
-  bool grounded = 4;
-  bool needs_maintenance = 5;
-  bool undergoing_maintenance = 6;
-  bool has_cargo = 7;
-  
-  // Active issues summary
-  repeated IssueSummary active_issues = 10;
-  
-  // Legacy (deprecated)
-  string operation_state = 20;
-}
+// Request/response message stubs (fields to be defined in implementation).
+message ListDevicesRequest {}
+message ListDevicesResponse {}
+message GetDeviceRequest {}
+message GetDeviceResponse {}
+message BatchGetDeviceGpsRequest {}
+message BatchGetDeviceGpsResponse {}
+message GetLatestDeviceStatesRequest {}
+message GetLatestDeviceStatesResponse {}
+message ListDeviceHeartbeatHistoryRequest {}
+message ListDeviceHeartbeatHistoryResponse {}
+message GetLatestDeviceHeartbeatRequest {}
+message GetLatestDeviceHeartbeatResponse {}
+message OpenLidRequest {}
+message OpenLidResponse {}
+message OpenLidWithContextRequest {}
+message OpenLidWithContextResponse {}
+message CloseLidRequest {}
+message CloseLidResponse {}
+message SoftResetRequest {}
+message SoftResetResponse {}
+message HardResetRequest {}
+message HardResetResponse {}
+message ModemResetRequest {}
+message ModemResetResponse {}
+message SwitchSimBackupRequest {}
+message SwitchSimBackupResponse {}
+message ResetGpsRequest {}
+message ResetGpsResponse {}
+message SetLightsRequest {}
+message SetLightsResponse {}
+ message SignalLoadFailureRequest {}
+ message SignalLoadFailureResponse {}
+message DoordashVerifyFailureRequest {}
+message DoordashVerifyFailureResponse {}
+message StartWebRtcAuthRequest {}
+message StartWebRtcAuthResponse {}
+message GetRobotOperationalStateRequest {}
+message GetRobotOperationalStateResponse {}
+message ListRobotStateHistoryRequest {}
+message ListRobotStateHistoryResponse {}
+message GetRobotConnectivityOverallRequest {}
+message GetRobotConnectivityOverallResponse {}
+message ListRobotConnectivityHistoryRequest {}
+message ListRobotConnectivityHistoryResponse {}
+message RequestRobotStateTransitionRequest {}
+message RequestRobotStateTransitionResponse {}
+message SetUnlockPinRequest {}
+message SetUnlockPinResponse {}
+message RemoveUnlockPinRequest {}
+message RemoveUnlockPinResponse {}
+message SetRouteIdRequest {}
+message SetRouteIdResponse {}
 ```
 
 ---
@@ -1012,11 +1045,11 @@ message RobotOperationalState {
 
 MRO and Mission Control currently use:
 
-```typescript
+```tsx
 // Current: Direct state transition
 POST /state/{serial}/request-transition
 {
-  "fromStates": ["PARKED"],
+  "fromStates":["PARKED"],
   "toState": "GROUNDED",
   "comment": "reason: Suspicious behavior, comment: Robot drove erratically"
 }
@@ -1024,46 +1057,13 @@ POST /state/{serial}/request-transition
 
 ### Target State: Semantic Actions
 
-| Current UI Action   | Old API                                                              | New API                                                                                | Service    |
-| ------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------- |
-| Ground robot        | `POST /state/{serial}/request-transition {toState: GROUNDED}`        | `POST /operations/device-issues` with `{type: 'MANUAL_GROUND'}`                        | Operations |
-| Unground robot      | `POST /state/{serial}/request-transition {toState: PARKED/OFF_DUTY}` | `DELETE /operations/device-issues/{id}` or `POST /operations/robots/{serial}/unground` | Operations |
-| Deploy robot        | `POST /state/{serial}/request-transition {toState: PARKED}`          | `POST /operations/deployments`                                                         | Operations |
-| Undeploy robot      | `POST /state/{serial}/request-transition {toState: OFF_DUTY}`        | `DELETE /operations/deployments/{id}`                                                  | Operations |
-| View issues         | N/A                                                                  | `GET /operations/device-issues?device_serial={serial}`                                 | Operations |
-
-### New MRO UI Mockup
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Robot C1-0042                                                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  Status                                                          │
-│  ─────────────────────────────────────────────────────────────── │
-│  Deployment: DEPLOYED at Parking Lot A                          │
-│  Operational: ⚠️ GROUNDED (1 active issue)                       │
-│  Cargo: Empty                                                    │
-│                                                                  │
-│  Active Issues                                                   │
-│  ─────────────────────────────────────────────────────────────── │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │ 🔴 MANUAL_GROUND                           [Clear Issue]    ││
-│  │ "Robot drove erratically during last trip"                  ││
-│  │ Raised by operator@coco.co • 2 hours ago                    ││
-│  └─────────────────────────────────────────────────────────────┘│
-│                                                                  │
-│  Actions                                                         │
-│  ─────────────────────────────────────────────────────────────── │
-│  [Ground Robot]  [Report Issue]  [End Deployment]               │
-│                                                                  │
-│  Issue History                                             [▼]  │
-│  ─────────────────────────────────────────────────────────────── │
-│  • GPS_FAULT - Auto-cleared after 5 min (yesterday)            │
-│  • MANUAL_GROUND - Cleared by tech@coco.co (3 days ago)        │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
+|Current UI Action|Old API|New API|Service|
+|---|---|---|---|
+|Ground robot|`POST /state/{serial}/request-transition {toState: GROUNDED}`|`POST /operations/device-issues` with `{type: 'MANUAL_GROUND'}`|Operations|
+|Unground robot|`POST /state/{serial}/request-transition {toState: PARKED/OFF_DUTY}`|`DELETE /operations/device-issues/{id}` or `POST /operations/robots/{serial}/unground`|Operations|
+|Deploy robot|`POST /state/{serial}/request-transition {toState: PARKED}`|`POST /operations/deployments`|Operations|
+|Undeploy robot|`POST /state/{serial}/request-transition {toState: OFF_DUTY}`|`DELETE /operations/deployments/{id}`|Operations|
+|View issues|N/A|`GET /operations/device-issues?device_serial={serial}`|Operations|
 
 ---
 
@@ -1072,18 +1072,19 @@ POST /state/{serial}/request-transition
 ### Robot Firmware
 
 Current robot firmware reads `operation_state` from the shadow to control:
+
 - Lights (different patterns per state)
 - Sounds (different profiles per state)
 - OTA permissions (only in OFF_DUTY)
 
 **Strategy: Dual-write during transition**
 
-```typescript
+```tsx
 // Operations Service computes both old and new fields
 await deviceService.setShadowFields(serial, {
   // Legacy (robot reads this today)
   operation_state: 'GROUNDED',
-  
+
   // New explicit fields (robot will read these after firmware update)
   light_mode: 'MAINTENANCE',
   sound_profile: 'SILENT',
@@ -1095,15 +1096,15 @@ await deviceService.setShadowFields(serial, {
 
 Services currently consuming `Robots.StateChange`:
 
-| Consumer           | Current Field    | New Event                       | New Field                       |
-| ------------------ | ---------------- | ------------------------------- | ------------------------------- |
-| Dispatch Engine    | `operationState` | `Robot.OperationalStateChanged` | `grounded`, `deployment_status` |
-| Fleet Service (Go) | `operationState` | `Robot.OperationalStateChanged` | `grounded`, `deployment_status` |
-| Operations Service | `operationState` | Internal (self-publishes)       | N/A                             |
+|Consumer|Current Field|New Event|New Field|
+|---|---|---|---|
+|Dispatch Engine|`operationState`|`Robot.OperationalStateChanged`|`grounded`, `deployment_status`|
+|Fleet Service (Go)|`operationState`|`Robot.OperationalStateChanged`|`grounded`, `deployment_status`|
+|Operations Service|`operationState`|Internal (self-publishes)|N/A|
 
 **Strategy: Publish both events during transition**
 
-```typescript
+```tsx
 // Operations Service publishes both
 await publish('Robots.StateChange', { serial, operationState: 'GROUNDED', ... });
 await publish('Robot.OperationalStateChanged', { serial, grounded: true, ... });
@@ -1180,6 +1181,7 @@ Timeline:
 ## Work Breakdown
 
 ### Chunk 1: Device Service Foundation
+
 - Create new Device Service
 - Move telemetry processing from State Service
 - Move connectivity handling from State Service
@@ -1187,6 +1189,7 @@ Timeline:
 - Implement `SetShadowFields` RPC
 
 ### Chunk 2: Device Issues Module
+
 - Create `device_issues` table in Operations DB
 - Implement issue CRUD operations
 - Implement `RaiseDeviceIssue`, `ClearDeviceIssue` RPCs
@@ -1194,45 +1197,53 @@ Timeline:
 - Add handler for `Device.HealthDegraded` events
 
 ### Chunk 3: FoAssistanceRequest Integration
+
 - Add `issue_id` column to `fo_assistance_requests` table
 - Update FO request creation to create associated issue when `needsGrounding=true`
 - Update FO request resolution to clear associated issue
 
 ### Chunk 4: Operational State Deriver
+
 - Implement `deriveOperationalState()` function
 - Replace `getLatestRobotStateHistory()` usages with derived state
 - Implement `Robot.OperationalStateChanged` event publishing
 - Wire up triggers: deployment changes, trip changes, issue changes, FO task changes
 
 ### Chunk 5: Lid Service Extraction
+
 - Rename State Service to Lid Service
 - Remove operation state logic
 - Remove telemetry processing (moved to Device Service)
 - Keep only lid cycle and PIN entry functionality
 
 ### Chunk 6: RobotStateHistory Simplification
+
 - Remove unused `driveable` field
 - Update `RobotStateHistory` to be audit-only
 - Remove usages that derive current state from history
 - Keep history writes for audit trail
 
 ### Chunk 7: UI Migration
+
 - Update MRO to use semantic actions (issue-based grounding)
 - Update Mission Control to use semantic actions
 - Add issue list views to device detail pages
 - Remove StateTransition component usage
 
 ### Chunk 8: Event Consumer Migration
+
 - Update Dispatch Engine to consume `Robot.OperationalStateChanged`
 - Update Fleet Service to consume `Robot.OperationalStateChanged`
 - Dual-publish `Robots.StateChange` + `Robot.OperationalStateChanged` during transition
 
 ### Chunk 9: hasCargo Integration
+
 - Update Device Service to process `hasCargo` from heartbeat
 - Publish `Device.CargoChanged` event
 - Update consumers to use `hasCargo` instead of `hasFood`
 
 ### Future Work (Deferred)
+
 - **Debouncing/Hysteresis**: Add configurable debounce rules for issue creation from health events
 - **Issue Suppressions**: Add ability to suppress issue creation for specific types/devices
 - **TTL Auto-clear**: Add time-based automatic issue clearing
@@ -1243,9 +1254,7 @@ Timeline:
 ## Open Questions
 
 1. **Issue type taxonomy**: Should issue types be hardcoded or configurable? Recommend starting hardcoded, make configurable if needed.
-
 2. **Audit retention**: How long to keep cleared issue history? Recommend 90 days in hot storage, archive to cold storage after.
-
 3. **Severity override**: Can operators upgrade/downgrade issue severity? Recommend no initially—clear and re-raise if needed.
 
 ---
@@ -1256,99 +1265,99 @@ This section provides a comprehensive breakdown of all `Device.*` events publish
 
 ### Device.Heartbeat
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Dispatch Engine** | `eventsink/handlers/device-heartbeat.handler.ts` | Update robot supply cache for assignment decisions | `location`, `battery_percent`, `online`, `component_statuses` |
-| **Fleet Service (Go)** | `fleet/internal/consumer/device_consumer.go` | Update Redis cache for Uber position updates, DynamoDB for persistence | `location`, `battery_percent`, `online`, `has_cargo` |
-| **Trip Monitor** | `trip-monitor/handlers/device-heartbeat.handler.ts` | Update trip trace, recalculate ETA | `location`, `updated_at` |
-| **Operations Service** | `operations/handlers/device-heartbeat.handler.ts` | Update Redis ephemeral state | `location`, `online`, `component_statuses` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Dispatch Engine**|`eventsink/handlers/device-heartbeat.handler.ts`|Update robot supply cache for assignment decisions|`location`, `battery_percent`, `online`, `component_statuses`|
+|**Fleet Service (Go)**|`fleet/internal/consumer/device_consumer.go`|Update Redis cache for Uber position updates, DynamoDB for persistence|`location`, `battery_percent`, `online`, `has_cargo`|
+|**Trip Monitor**|`trip-monitor/handlers/device-heartbeat.handler.ts`|Update trip trace, recalculate ETA|`location`, `updated_at`|
+|**Operations Service**|`operations/handlers/device-heartbeat.handler.ts`|Update Redis ephemeral state|`location`, `online`, `component_statuses`|
 
 ### Device.Moved
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Trip Monitor** | `trip-monitor/handlers/device-moved.handler.ts` | Route deviation detection, arrival detection | `new_location`, `previous_location`, `distance_meters` |
-| **Operations Service** | `operations/handlers/device-moved.handler.ts` | Geofence checks (entering/leaving service areas) | `new_location`, `device_name` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Trip Monitor**|`trip-monitor/handlers/device-moved.handler.ts`|Route deviation detection, arrival detection|`new_location`, `previous_location`, `distance_meters`|
+|**Operations Service**|`operations/handlers/device-moved.handler.ts`|Geofence checks (entering/leaving service areas)|`new_location`, `device_name`|
 
 ### Device.LidOpened
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Lid Service** | `lid-service/handlers/lid-opened.handler.ts` | Start lid cycle, track open duration | `device_name`, `opened_at`, `trigger`, `request_id` |
-| **Deliveries Service** | `deliveries/handlers/lid-opened.handler.ts` | Track loading start time for active deliveries | `device_name`, `opened_at` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Lid Service**|`lid-service/handlers/lid-opened.handler.ts`|Start lid cycle, track open duration|`device_name`, `opened_at`, `trigger`, `request_id`|
+|**Deliveries Service**|`deliveries/handlers/lid-opened.handler.ts`|Track loading start time for active deliveries|`device_name`, `opened_at`|
 
 ### Device.LidClosed
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Lid Service** | `lid-service/handlers/lid-closed.handler.ts` | Complete lid cycle, emit `LidCycle.Completed` | `device_name`, `closed_at`, `seconds_open`, `was_timeout` |
-| **Deliveries Service** | `deliveries/handlers/lid-closed.handler.ts` | Trigger load completion if conditions met | `device_name`, `closed_at`, `seconds_open` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Lid Service**|`lid-service/handlers/lid-closed.handler.ts`|Complete lid cycle, emit `LidCycle.Completed`|`device_name`, `closed_at`, `seconds_open`, `was_timeout`|
+|**Deliveries Service**|`deliveries/handlers/lid-closed.handler.ts`|Trigger load completion if conditions met|`device_name`, `closed_at`, `seconds_open`|
 
 ### Device.LidJammed
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Lid Service** | `lid-service/handlers/lid-jammed.handler.ts` | Abort lid cycle, alert operations | `device_name`, `fault_code` |
-| **Operations Service** | `operations/handlers/device-issues/lid-jammed.handler.ts` | Create urgent FO task | `device_name`, `fault_code`, `message` |
-| **Deliveries Service** | `deliveries/handlers/lid-jammed.handler.ts` | Handle failed handoff scenario | `device_name` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Lid Service**|`lid-service/handlers/lid-jammed.handler.ts`|Abort lid cycle, alert operations|`device_name`, `fault_code`|
+|**Operations Service**|`operations/handlers/device-issues/lid-jammed.handler.ts`|Create urgent FO task|`device_name`, `fault_code`, `message`|
+|**Deliveries Service**|`deliveries/handlers/lid-jammed.handler.ts`|Handle failed handoff scenario|`device_name`|
 
 ### Device.BatteryLow
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Operations Service** | `operations/handlers/device-issues/battery-low.handler.ts` | Create FO task for battery swap (non-urgent) | `device_name`, `battery_percent`, `is_charging` |
-| **Dispatch Engine** | `dispatch-engine/handlers/battery-low.handler.ts` | Reduce robot availability score | `device_name`, `battery_percent` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Operations Service**|`operations/handlers/device-issues/battery-low.handler.ts`|Create FO task for battery swap (non-urgent)|`device_name`, `battery_percent`, `is_charging`|
+|**Dispatch Engine**|`dispatch-engine/handlers/battery-low.handler.ts`|Reduce robot availability score|`device_name`, `battery_percent`|
 
 ### Device.BatteryCritical
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Operations Service** | `operations/handlers/device-issues/battery-critical.handler.ts` | Raise CRITICAL issue (grounds robot), create urgent FO task | `device_name`, `battery_percent`, `is_charging` |
-| **Dispatch Engine** | `dispatch-engine/handlers/battery-critical.handler.ts` | Remove from available supply | `device_name` |
-| **Trip Monitor** | `trip-monitor/handlers/battery-critical.handler.ts` | Alert if robot is mid-trip | `device_name`, `battery_percent` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Operations Service**|`operations/handlers/device-issues/battery-critical.handler.ts`|Raise CRITICAL issue (grounds robot), create urgent FO task|`device_name`, `battery_percent`, `is_charging`|
+|**Dispatch Engine**|`dispatch-engine/handlers/battery-critical.handler.ts`|Remove from available supply|`device_name`|
+|**Trip Monitor**|`trip-monitor/handlers/battery-critical.handler.ts`|Alert if robot is mid-trip|`device_name`, `battery_percent`|
 
 ### Device.ConnectivityChanged
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Operations Service** | `operations/handlers/device-connectivity.handler.ts` | Update robot connectivity status, potentially raise issue if offline too long | `device_name`, `online`, `previous_online`, `changed_at` |
-| **Dispatch Engine** | `dispatch-engine/handlers/device-connectivity.handler.ts` | Remove/add to supply based on online status | `device_name`, `online` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Operations Service**|`operations/handlers/device-connectivity.handler.ts`|Update robot connectivity status, potentially raise issue if offline too long|`device_name`, `online`, `previous_online`, `changed_at`|
+|**Dispatch Engine**|`dispatch-engine/handlers/device-connectivity.handler.ts`|Remove/add to supply based on online status|`device_name`, `online`|
 
 ### Device.HealthDegraded
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Operations Service** (Device Issues module) | `operations/modules/device-issues/health-degraded.handler.ts` | Create issue based on component severity, potentially ground robot | `device_name`, `component_name`, `status_code`, `fault_code`, `message` |
-| **Dispatch Engine** | `dispatch-engine/handlers/health-degraded.handler.ts` | Mark robot unhealthy if CRITICAL, remove from supply | `device_name`, `status_code` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Operations Service** (Device Issues module)|`operations/modules/device-issues/health-degraded.handler.ts`|Create issue based on component severity, potentially ground robot|`device_name`, `component_name`, `status_code`, `fault_code`, `message`|
+|**Dispatch Engine**|`dispatch-engine/handlers/health-degraded.handler.ts`|Mark robot unhealthy if CRITICAL, remove from supply|`device_name`, `status_code`|
 
 ### Device.HealthRestored
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Operations Service** (Device Issues module) | `operations/modules/device-issues/health-restored.handler.ts` | Auto-clear issue if applicable | `device_name`, `component_name`, `downtime_seconds` |
-| **Dispatch Engine** | `dispatch-engine/handlers/health-restored.handler.ts` | Mark robot healthy if all components OK, add to supply | `device_name`, `component_name` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Operations Service** (Device Issues module)|`operations/modules/device-issues/health-restored.handler.ts`|Auto-clear issue if applicable|`device_name`, `component_name`, `downtime_seconds`|
+|**Dispatch Engine**|`dispatch-engine/handlers/health-restored.handler.ts`|Mark robot healthy if all components OK, add to supply|`device_name`, `component_name`|
 
 ### Device.EmergencyStop
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Operations Service** | `operations/handlers/device-issues/emergency-stop.handler.ts` | Immediately raise SAFETY issue (grounds robot), create critical alert | `device_name`, `source`, `triggered_by`, `triggered_at` |
-| **Dispatch Engine** | `dispatch-engine/handlers/emergency-stop.handler.ts` | Remove from supply immediately | `device_name` |
-| **Trip Monitor** | `trip-monitor/handlers/emergency-stop.handler.ts` | Pause trip, alert if mid-delivery | `device_name` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Operations Service**|`operations/handlers/device-issues/emergency-stop.handler.ts`|Immediately raise SAFETY issue (grounds robot), create critical alert|`device_name`, `source`, `triggered_by`, `triggered_at`|
+|**Dispatch Engine**|`dispatch-engine/handlers/emergency-stop.handler.ts`|Remove from supply immediately|`device_name`|
+|**Trip Monitor**|`trip-monitor/handlers/emergency-stop.handler.ts`|Pause trip, alert if mid-delivery|`device_name`|
 
 ### Device.PinEntry
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Lid Service** | `lid-service/handlers/pin-entry.handler.ts` | Validate PIN against active unlock context, decide whether to open lid | `device_name`, `entered_key`, `entered_at` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Lid Service**|`lid-service/handlers/pin-entry.handler.ts`|Validate PIN against active unlock context, decide whether to open lid|`device_name`, `entered_key`, `entered_at`|
 
 ### Device.CargoChanged
 
-| Consumer | Handler Location | Purpose | Fields Used |
-|----------|------------------|---------|-------------|
-| **Operations Service** | `operations/handlers/cargo-changed.handler.ts` | Update cargo status for trip tracking | `device_name`, `has_cargo`, `previous_has_cargo` |
-| **Deliveries Service** | `deliveries/handlers/cargo-changed.handler.ts` | Update delivery state (loaded/unloaded) | `device_name`, `has_cargo` |
-| **Dispatch Engine** | `dispatch-engine/handlers/cargo-changed.handler.ts` | Update supply cache with cargo status | `device_name`, `has_cargo` |
+|Consumer|Handler Location|Purpose|Fields Used|
+|---|---|---|---|
+|**Operations Service**|`operations/handlers/cargo-changed.handler.ts`|Update cargo status for trip tracking|`device_name`, `has_cargo`, `previous_has_cargo`|
+|**Deliveries Service**|`deliveries/handlers/cargo-changed.handler.ts`|Update delivery state (loaded/unloaded)|`device_name`, `has_cargo`|
+|**Dispatch Engine**|`dispatch-engine/handlers/cargo-changed.handler.ts`|Update supply cache with cargo status|`device_name`, `has_cargo`|
 
 ### Event Routing Summary
 
@@ -1385,22 +1394,3 @@ This section provides a comprehensive breakdown of all `Device.*` events publish
     │         │ │ Engine  │ │ Service │ │ Monitor │ │ Service │
     └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘
 ```
-
----
-
-## Appendix: Comparison with v2
-
-| Aspect | v2 Design | v3 Design |
-|--------|-----------|-----------|
-| Grounding mechanism | State machine transition | Derived from active issues |
-| Issue ownership | Not defined | Operations Service (Device Issues module) |
-| Deployment vs grounded | Conflated in operation_state | Three orthogonal dimensions |
-| Fleet Device Service | Read-only aggregator | Removed (Operations Service handles derivation) |
-| Shadow writes | Device Service decides | Operations Service decides, Device Service writes |
-| operator_hold | Separate table | MANUAL_GROUND issue type |
-| UI actions | State transitions | Semantic actions (raise issue, clear issue, deploy, etc.) |
-| FoAssistanceRequest | Independent | Associated with issue |
-| RobotStateHistory | Source of current state | Audit log only |
-| needsMaintenance | Stored flag | Derived from issues + FO tasks |
-| hasFood | Inferred from lid events | `hasCargo` from device |
-| driveable | Stored (but never set) | Removed |
