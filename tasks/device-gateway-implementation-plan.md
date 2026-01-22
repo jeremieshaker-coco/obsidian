@@ -1,4 +1,4 @@
-> Goal: Implement the new Device service in Go (coco-services) that consumes events from GreenGrass, DriveU, and AWS IoT, publishes normalized device events, and enables phased migration of consumers and APIs. PoC link: [https://github.com/cocorobotics/delivery-platform/pull/6648Design:](https://github.com/cocorobotics/delivery-platform/pull/6648Design:) Device API Redesign [WIP] - Includes good starting points for various protobuf definitions.
+Design: [Device API Redesign [WIP]](https://www.notion.so/Device-API-Redesign-WIP-2e786fd0dcab8102a3f2fff97a772420?pvs=21)
 
 **Note:** The plan and the design are **not aligned** and this is intentional. The design lays out all the things we want to change, regardless of the sequencing. This plan tries to be pragmatic about what can be changed without re-writing an unreasonable amount of code.
 
@@ -11,9 +11,9 @@ This plan covers:
 - Building a new Device to ingest GreenGrass/DriveU/AWS IoT signals and publish normalized `Device.*` events.
 - Incrementally migrating consumers and APIs to the new device event and API surface without double-subscribing.
 - Simplifying robot state events while keeping `robotStateHistory` as the source of truth in Operations.
-- Replacing `Robots.StateChange` with `Operations.DeviceOperationalStateChanged` (reduced payload), derived from `robotStateHistory`.
+- Replacing `Robots.StateChange` with `Operations.DeviceOperationalStateChanged` (reduced payload focused on just the fields related to operations - needsMaintenance, needsPickup, undergoingMaintenance, operationState), derived from `robotStateHistory`.
 - Removing dependency on `robotStateHistory` reads where they were used for current-state fields.
-- Deprecating Milestone 4 event publishing for `TripEvents.*`, `DeliveryEvents.*`, `FoTaskEvents.*`, and `DeploymentEvents.*` because APIs replace those state effects.
+- Migrating Fleet Service (Go, in `coco-services` repo) to consume `Device.StateUpdated` and `Operations.DeviceOperationalStateChanged`.
 
 ## Decisions / Goals
 
@@ -21,22 +21,35 @@ This plan covers:
 - Replace `Robots.StateChange` with `Operations.DeviceOperationalStateChanged` (payload only: `hasFood`, `operationState`, `needsMaintenance`, `needsPickup`, `needsMovement`, `undergoingMaintenance`).
 - Keep `hasFood` as a legacy field in `Operations.DeviceOperationalStateChanged` until device-reported cargo is available.
 - Do not publish `Device.Moved`; movement is derived from `Device.StateUpdated` where needed.
-- Drop `driveable` entirely.
-- Because of the APIs, we will NOT create these Milestone 4 events:
-    - TripEvents.*
-    - DeliveryEvents.*
-    - FoTaskEvents.*
-    - DeploymentEvents.*
-- Therefore Milestone 4 event publishing is deprecated/unneeded.
+
+## Unused Fields Analysis
+
+During planning, we analyzed the `StateChangeEvent` payload to determine which fields are actively used by consumers. The following fields were found to be **unused** and do not require replacement in the migration:
+
+|Field|Finding|Details|
+|---|---|---|
+|`tripType`|**Unused**|Stored in `robotStateHistory` but never queried for business logic. Dispatch Engine passes it through but never acts on it. The republished `Robots.State` event has no subscribers.|
+|`attemptCancellationReason`|**Unused**|Set to `null` 90% of the time (just resetting). Only set to a real value in `fo-requests.service.ts`. All consumers ignore it—dispatch-engine just passes it through, operations and state don't even read it. The actual cancellation logic uses database storage and dedicated exchanges (`TripRescueRequired`, `TripUnrecoverable`).|
+|`driveable`|**Dropped**|Already planned to be removed.|
+
+This analysis simplifies the migration significantly—consumers do not need to derive these fields from other sources after `Robots.StateChange` is removed.
+
+## Unused Events Analysis
+
+The following events were analyzed and found to have **no consumers**:
+
+|Event|Finding|Details|
+|---|---|---|
+|`IoT.HealthStateChanged`|**No consumers**|Published by State Service with the same payload as `IoT.Heartbeat` but routed by health status (`{serial}.{healthy|
+|`Robots.State`|**Deprecated**|Full robot state snapshot republished by Dispatch Engine for Fleet Service. Will be replaced by `Device.StateUpdated` + `Operations.DeviceOperationalStateChanged`. See M11 for explicit deletion.|
 
 # Outcome
 
 By the end of this implementation plan, we will have:
 
 - A fully implemented Device Service (not including any fleet-related functionality)
-- Decommissioned the legacy Device Service
-- Restricted delivery-platform dependencies to rely on Device.* events plus Operations-owned robot state (`robotStateHistory`)
-- Removed our dependency on OperationState (aside from publishing it to the device shadow)
+- Restricted delivery-platform dependencies to rely on Device.* events
+- Operations will become the source of truth for operationState (currently also owned by State)
 - Replaced `Robots.StateChange` with `Operations.DeviceOperationalStateChanged`, and removed `IoT.Heartbeat` after migration
 
 ---
@@ -68,18 +81,9 @@ Naming conventions:
 - Exchange names use slash-delimited paths (e.g., `device/state-updated`, `device/driveu/connectivity-changed`)
 - Routing keys use dot notation when structured; for DeviceEvents we keep routing keys as `{serial}` only
 
-Why publish new events even when similar events exist:
-
-- New events are action-oriented and carry intent/timestamps (vs. derived or repository-level state)
-- Routing is serial-based for efficient fan-out to device-scoped consumers
-- Payloads include new fields when available (e.g., startedAt/resumedAt/completedAt, deployment location context)
-- Overlap is temporary to enable incremental migration without breaking downstream systems
-
 ### Device.StateUpdated (Temporary Stream)
 
-`Device.StateUpdated` is a temporary, event-based stand-in for a future gRPC streaming API.
-It emits a **full device snapshot** and can be triggered by multiple upstream sources (IoT heartbeat, DriveU connectivity updates, or other state changes).
-The single-stream approach intentionally bundles health, connectivity, location, and other fields to reduce race conditions across multiple event streams.
+`Device.StateUpdated` is a temporary, event-based stand-in for a future gRPC streaming API. It emits a **full device snapshot** and can be triggered by multiple upstream sources (IoT heartbeat, DriveU connectivity updates, or other state changes). The single-stream approach intentionally bundles health, connectivity, location, and other fields to reduce race conditions across multiple event streams.
 
 ---
 
@@ -89,49 +93,26 @@ The single-stream approach intentionally bundles health, connectivity, location,
 
 **Goal**: Set up the Device service within the existing TypeScript service so we can publish normalized events quickly.
 
-### ~~1.1 Service Scaffolding (Go, deprecated)~~
-
-~~- [ ] **TASK-001**: Create new `device` service in `coco-services` repo~~
-~~    - Directory structure: `device/`~~
-~~    - Basic Go service setup (main, config, healthcheck)~~
-~~    - Dockerfile and k8s manifests~~
-~~    - CI/CD pipeline configuration~~
-~~- [ ] **TASK-002**: Set up RabbitMQ infrastructure~~
-~~    - Define new exchanges in `device.events` namespace~~
-~~    - Configure DLQ and retry policies~~
-~~    - Set up bindings for fan-out to consumers~~
-~~- [ ] **TASK-003**: Set up AWS IoT SQS consumer~~
-~~    - Configure SQS queue for IoT heartbeat messages~~
-~~    - Implement basic message polling and acknowledgment~~
-~~    - Add metrics and logging~~
-~~- [ ] **TASK-004**: Set up DriveU webhook handler~~
-~~    - HTTP endpoint for DriveU status callbacks~~
-~~    - Authentication/validation middleware~~
-~~    - Event normalization layer~~
-
 ### 1.1 Device Service (TypeScript) Scaffolding
 
-- [ ] **TASK-001A**: Add AWS IoT SQS consumer in TypeScript
+- [ ] **M01-01**: Add AWS IoT SQS consumer in TypeScript
     - Configure SQS queue for IoT heartbeat messages (used to emit `Device.StateUpdated`)
     - Implement basic message polling and acknowledgment
     - Add metrics and logging
-- [ ] **TASK-001B**: Add DriveU webhook handler in TypeScript
+- [ ] **M01-02**: Add DriveU webhook handler in TypeScript
     - HTTP endpoint for DriveU status callbacks
     - Authentication/validation middleware
     - Event normalization layer
 
 ### 1.2 Data Layer
 
-- [ ] **TASK-005**: Define protobuf schemas for Device.* events
+- [ ] **M01-03**: Define protobuf schemas for Device.* events
     - `Device.StateUpdated` (full snapshot; temporary stand-in for gRPC stream)
     - `Device.LidOpened` / `Device.LidClosed` / `Device.LidJammed`
-    - `Device.BatteryLow` / `Device.BatteryCritical`
-    - `Device.ConnectivityChanged`
-    - `Device.HealthDegraded` / `Device.HealthRestored`
     - `Device.EmergencyStop`
     - `Device.PinEntry`
     - `Device.CargoChanged` (deferred; requires device-reported cargo)
-- [ ] **TASK-006**: Set up device state storage
+- [ ] **M01-04**: Set up device state storage
     - Redis cache for ephemeral device state
     - Define schema for device snapshots
     - Implement get/set operations
@@ -144,33 +125,33 @@ The single-stream approach intentionally bundles health, connectivity, location,
 
 ### 2.1 Device.StateUpdated
 
-- [ ] **TASK-007**: Implement state update parsing
+- [ ] **M02-01**: Implement state update parsing
     - Parse IoT heartbeat payload from SQS
     - Normalize to internal `Device` model
     - Handle schema versioning
-- [ ] **TASK-008**: Publish `Device.StateUpdated` event
+- [ ] **M02-02**: Publish `Device.StateUpdated` event
     - Map internal model to protobuf
     - Publish to `device.events` exchange
     - Routing key: `{serial}`
     - Include `updated_fields` mask and `trigger_source` (heartbeat, DriveU, connectivity)
     - Publish on any upstream change that affects device state, including:
-      - IoT heartbeat received
-      - DriveU connectivity callback/status change
-      - Connectivity state transitions (IoT/DriveU online/offline)
-      - Component health changes if tracked outside heartbeat
+        - IoT heartbeat received
+        - DriveU connectivity callback/status change
+        - Connectivity state transitions (IoT/DriveU online/offline)
+        - Component health changes if tracked outside heartbeat
     - Payload is a full device snapshot (location, battery, connectivity, component health, lid state, etc.)
 
 ### 2.2 Device Health Events
 
-- [ ] **TASK-010**: Implement component health tracking
+- [ ] **M02-03**: Implement component health tracking
     - Track previous component states per device
     - Detect state transitions (OK → FAULT, FAULT → OK)
     - Debounce rapid state changes (configurable threshold)
-- [ ] **TASK-011**: Publish `Device.HealthDegraded` event
+- [ ] **M02-04**: Publish `Device.HealthDegraded` event
     - Trigger on component status degradation
     - Include `component_name`, `status_code`, `fault_code`, `message`
     - Routing key: `{serial}`
-- [ ] **TASK-012**: Publish `Device.HealthRestored` event
+- [ ] **M02-05**: Publish `Device.HealthRestored` event
     - Trigger on component recovery
     - Include `downtime_seconds`
     - Routing key: `{serial}`
@@ -181,66 +162,65 @@ The single-stream approach intentionally bundles health, connectivity, location,
 
 **Goal**: Publish connectivity and lid-related events from the new service.
 
-### 3.1 Connectivity Events (Separate Streams)
+### 3.1 Connectivity Events (Aggregated)
 
-- [ ] **TASK-014**: Implement IoT connectivity tracking (separate stream)
-    - Detect online/offline transitions from IoT heartbeats
-    - Publish `Device.IotConnectivityChanged`
+> Design Decision: To avoid changing too many things at once and to preserve the existing consumer abstraction, we publish a single aggregated connectivity event rather than separate IoT/DriveU streams. Consumers already work with "overall" connectivity status and don't need to reason about individual sources.
+
+- [ ] **M03-01**: Implement aggregated connectivity tracking
+    - Track online/offline transitions from both IoT heartbeats and DriveU webhooks
+    - Compute overall connectivity status (online if any source is online)
+    - Publish `Device.ConnectivityChanged` with aggregated status
+    - Payload includes: `overallStatus`, `iotStatus`, `driveuStatus`, `previousOverallStatus`
     - Routing key: `{serial}`
-    - Add overlap TODOs in `payload.types.ts` and `names.ts` documenting deprecation of legacy shared connectivity
+    - Add overlap TODOs in `payload.types.ts` and `names.ts` documenting deprecation of `State.ConnectivityOverallChanged`
     - Permalink (`payload.types.ts`): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/payload.types.ts#L662-L703](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/payload.types.ts#L662-L703)
     - Permalink (`names.ts`): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/names.ts#L95-L137](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/names.ts#L95-L137)
-- [ ] **TASK-015**: Implement DriveU connectivity tracking (separate stream)
-    - Detect online/offline transitions from DriveU webhooks
-    - Publish `Device.DriveuConnectivityChanged`
-    - Routing key: `{serial}`
-    - Add overlap TODOs in `payload.types.ts` and `names.ts` documenting deprecation of legacy shared connectivity
-    - Permalink (`payload.types.ts`): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/payload.types.ts#L662-L703](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/payload.types.ts#L662-L703)
-    - Permalink (`names.ts`): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/names.ts#L95-L137](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/names.ts#L95-L137)
-- [ ] **TASK-016**: Update downstream consumers to subscribe to the correct connectivity stream
-    - Ensure handlers use IoT vs DriveU streams explicitly (no shared “connectivity” event)
+- [ ] **M03-02**: Update downstream consumers to subscribe to `Device.ConnectivityChanged`
+    - Replace `State.ConnectivityOverallChanged` subscription with `Device.ConnectivityChanged`
     - Swap subscriptions in a single PR (no double subscribe)
     - Add TODOs in legacy connectivity publisher(s) for cleanup
 
 ### 3.2 Lid Events
 
-- [ ] **TASK-017**: Parse lid state from heartbeat
+> Note: LidCycle.* events (LidCycle.Init, LidCycle.Complete, LidCycle.Timeout, LidCycle.Interrupt) are separate from Device.Lid* events and will remain untouched. LidCycle.* events track full lid cycle semantics with timing and reasons, while Device.Lid* events are point-in-time state changes from the device. Both serve different purposes and will coexist.
+
+- [ ] **M03-03**: Parse lid state from heartbeat
     - Detect lid open/close transitions
     - Track lid open trigger (button, PIN, command, manual)
-- [ ] **TASK-018**: Publish `Device.LidOpened` event
+- [ ] **M03-04**: Publish `Device.LidOpened` event
     - Include `trigger`, `request_id` (if command-triggered)
     - Routing key: `{serial}`
 - [ ] **TASK-019**: Publish `Device.LidClosed` event
     - Include `seconds_open`, `was_timeout`
     - Routing key: `{serial}`
-- [ ] **TASK-020**: Publish `Device.LidJammed` event
+- [ ] **M03-07**: Publish `Device.LidJammed` event
     - Trigger on lid mechanism fault
     - Include `fault_code`, `message`
     - Routing key: `{serial}`
 
 ### 3.3 Battery Events
 
-- [ ] **TASK-021**: Implement battery threshold tracking
+- [ ] **M03-08**: Implement battery threshold tracking
     - Track battery level per device
     - Detect downward threshold crossings (20%, 5%)
     - Note: This mirrors current system behavior; future intent is to emit battery range events once range semantics are defined
-- [ ] **TASK-022**: Publish `Device.BatteryLow` event
+- [ ] **M03-09**: Publish `Device.BatteryLow` event
     - Trigger at 20% threshold
     - Routing key: `{serial}`
     - Note: This is a stopgap; prefer range-based signals when available
-- [ ] **TASK-023**: Publish `Device.BatteryCritical` event
+- [ ] **M03-10**: Publish `Device.BatteryCritical` event
     - Trigger at 5% threshold
     - Routing key: `{serial}`
     - Note: This is a stopgap; prefer range-based signals when available
 
 ### 3.4 Pin Entry, Cargo & Emergency Stop Events
 
-- [ ] **TASK-024**: Publish `Device.PinEntry` event
+- [ ] **M03-11**: Publish `Device.PinEntry` event
     - Parse PIN entry from IoT messages
     - Routing key: `{serial}`
-- [ ] **TASK-025**: Defer `Device.CargoChanged` (requires device-reported cargo)
+- [ ] **M03-12**: Defer `Device.CargoChanged` (requires device-reported cargo)
     - Keep `hasFood` as the legacy cargo signal in `Operations.DeviceOperationalStateChanged` for this migration
-- [ ] **TASK-026**: Publish `Device.EmergencyStop` event
+- [ ] **M03-13**: Publish `Device.EmergencyStop` event
     - Parse emergency stop from IoT messages
     - Include `source` (button, remote, system)
     - Routing key: `{serial}`
@@ -253,20 +233,20 @@ The single-stream approach intentionally bundles health, connectivity, location,
 
 ### 4.1 Operations.DeviceOperationalStateChanged (Replacement for Robots.StateChange)
 
-- [ ] **TASK-025L0**: Publish `Operations.DeviceOperationalStateChanged` from Operations
+- [ ] **M04-01**: Publish `Operations.DeviceOperationalStateChanged` from Operations
     - _Definition of Done:_ Event is emitted based on `robotStateHistory` updates (or state transition events) in Operations.
     - Payload fields: `hasFood` (legacy), `operationState`, `needsMaintenance`, `needsPickup`, `needsMovement`, `undergoingMaintenance`
     - Routing key: `{serial}`
     - Double-publish with `Robots.StateChange` during migration; add TODOs for cleanup
     - Publish from the same Operations call sites that currently emit `Robots.StateChange`:
-      - `robot-fleet-management.service.ts` (deploy/undeploy): https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fleet-management/services/robot-fleet-management.service.ts
-      - `fo-requests.service.ts` (FO request creation): https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-requests/fo-requests.service.ts
-      - `fo-tasks.service.ts` (maintenance flags): https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-tasks/fo-tasks.service.ts
-      - `delivery.handlers.ts` (delivery termination): https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-tasks/handlers/delivery.handlers.ts
-      - `pilot-trips.publisher.ts` (trip completion/cancel): https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/publishers/pilot-trips.publisher.ts
-      - `pilot-trips.repository.ts` (trip resumption): https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/repositories/pilot-trips.repository.ts
-      - `pilot-trips.service.ts` (trip start): https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/services/pilot-trips.service.ts
-      - `robots.service.ts` (grounding): https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/robots/services/robots.service.ts
+        - `robot-fleet-management.service.ts` (deploy/undeploy): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fleet-management/services/robot-fleet-management.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fleet-management/services/robot-fleet-management.service.ts)
+        - `fo-requests.service.ts` (FO request creation): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-requests/fo-requests.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-requests/fo-requests.service.ts)
+        - `fo-tasks.service.ts` (maintenance flags): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-tasks/fo-tasks.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-tasks/fo-tasks.service.ts)
+        - `delivery.handlers.ts` (delivery termination): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-tasks/handlers/delivery.handlers.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-tasks/handlers/delivery.handlers.ts)
+        - `pilot-trips.publisher.ts` (trip completion/cancel): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/publishers/pilot-trips.publisher.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/publishers/pilot-trips.publisher.ts)
+        - `pilot-trips.repository.ts` (trip resumption): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/repositories/pilot-trips.repository.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/repositories/pilot-trips.repository.ts)
+        - `pilot-trips.service.ts` (trip start): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/services/pilot-trips.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/services/pilot-trips.service.ts)
+        - `robots.service.ts` (grounding): [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/robots/services/robots.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/robots/services/robots.service.ts)
     - _Verification:_ Dispatch Engine and Operations handlers can consume the new payload with parity metrics
 
 ### ~~4.2 Deprecated: Service-Level State Events (Trip/Deployment/FoTask/Delivery)~~
@@ -283,41 +263,78 @@ The single-stream approach intentionally bundles health, connectivity, location,
 
 ---
 
-## Milestone 5: State Transition Ownership Shift
+## Milestone 5: OperationState Derivation Inputs (Operations-Owned)
 
-**Goal**: Keep State Service as the transition engine initially, but move state-change publishing to Operations and prepare for State decommissioning.
+**Goal**: Define and implement the event inputs Operations must consume to keep `operationState` up-to-date after `Robots.StateChange` is removed.
 
-### 5.1 Stop State Service from Publishing Robots.StateChange
+**Matrix (source events → derived operationState):**
 
-- [ ] **TASK-025M1**: Disable `Robots.StateChange` publishing in State Service
+|Derived `operationState`|Source event(s) to consume|Primary owner|Notes|
+|---|---|---|---|
+|`ON_TRIP`|`Operations.TaskCreated` (JITP/RETURN/DEPLOYMENT)|Operations|Task creation triggers state transition to `ON_TRIP` today.|
+|`ON_TRIP`|`Operations.TaskTransitioned` (DELIVERY → PENDING)|Operations|Delivery trip enters active lifecycle.|
+|`PARKED`|`Operations.TaskTransitioned` (ANY trip → COMPLETED/CANCELLED)|Operations|Trip end returns robot to parked state.|
+|`PARKED`|`Operations.DeploymentTripCompleted` or deployment completed/cancelled task|Operations|If deployments are modeled as tasks, use task transitions.|
+|`OFF_DUTY`|`State.TransitionCompleted` (to OFF_DUTY)|State Service|Transition engine remains State for now.|
+|`GROUNDED`|`State.TransitionCompleted` (to GROUNDED)|State Service|Grounding is driven by State transitions.|
+
+> Note: State Service remains the transition engine for this migration phase (see Out of Scope / Future Phase). If Operations becomes the transition engine in a future phase, replace State.TransitionCompleted with Operations-issued transition events.
+
+### 5.1 Subscriptions & Derivation Tasks
+
+- [ ] **M05-01**: Subscribe to Operations trip/task lifecycle events for ON_TRIP/PARKED
+    - `Operations.TaskCreated` (JITP/RETURN/DEPLOYMENT)
+    - `Operations.TaskTransitioned` (DELIVERY → PENDING)
+    - `Operations.TaskTransitioned` (ANY → COMPLETED/CANCELLED)
+    - _Output:_ Update `robotStateHistory.operationState` (or publish `Operations.DeviceOperationalStateChanged`)
+- [ ] **M05-02**: Subscribe to `State.TransitionCompleted` for GROUNDED/OFF_DUTY
+    - Map `toState` → `operationState`
+    - _Output:_ Update `robotStateHistory.operationState` (or publish `Operations.DeviceOperationalStateChanged`)
+- [ ] **M05-03**: Replace Deliveries-driven `Robots.StateChange` with Operations-owned events
+    - Use Deliveries domain events (e.g., Attempt/Provider transitions) to drive Operations trip/task state
+    - Ensure `hasFood` and `needsMovement` are set via Operations update path (not Deliveries `Robots.StateChange`)
+- [ ] **M05-04**: Add parity metrics for derived `operationState`
+    - Compare derived `operationState` vs legacy `Robots.StateChange` during shadow mode
+    - Alert on mismatch by serial + trip id
+
+---
+
+## Milestone 6: State Transition Ownership Shift
+
+**Goal**: Keep State Service as the transition engine, but move state-change event publishing to Operations. State Service retains ownership of the state machine, transition validation, and `stateHistory` writes for this migration phase.
+
+### 6.1 Stop State Service from Publishing Robots.StateChange
+
+- [ ] **M06-01**: Disable `Robots.StateChange` publishing in State Service
     - Update `state-transition.subscriber.ts` to stop publishing `Robots.StateChange` (keep `State.TransitionCompleted`/`State.TransitionFailed`)
     - Ensure `robotStateHistory` writes remain intact during this phase
     - _Verification:_ State transitions still occur; no `Robots.StateChange` emitted from State
 
-### 5.2 Operations Publishes DeviceOperationalStateChanged
+### 6.2 Operations Publishes DeviceOperationalStateChanged
 
-- [ ] **TASK-025M2**: Operations consumes `State.TransitionCompleted` and publishes `Operations.DeviceOperationalStateChanged`
+- [ ] **M06-02**: Operations consumes `State.TransitionCompleted` and publishes `Operations.DeviceOperationalStateChanged`
     - Map the reduced payload from transition data + `robotStateHistory`
     - Continue double-publish with `Robots.StateChange` until consumers migrate
     - _Verification:_ Parity metrics match legacy `Robots.StateChange`
 
-### 5.3 Prepare for State Service Deletion
+### 6.3 Prepare for Future State Service Changes
 
-- [ ] **TASK-025M3**: Move or duplicate `robotStateHistory` writes into Operations
+- [ ] **M06-03**: Move or duplicate `robotStateHistory` writes into Operations
     - Keep State Service writing history until Operations parity is verified
     - _Verification:_ History records match between State and Operations in shadow mode
-- [ ] **TASK-025M4**: Add TODOs and tracking for removing State transition ownership
-    - Track remaining dependencies on `/state/:serial/request-transition` and state machine logic
+- [ ] **M06-04**: Document State Service dependencies for future migration
+    - Catalog remaining dependencies on `/state/:serial/request-transition` and state machine logic
+    - State transition ownership migration is out of scope for this phase (see [Out of Scope / Future Phase](https://www.notion.so/Implementation-Plan-2eb86fd0dcab8098a555c22d8980258f?pvs=21))
 
 ---
 
-## Milestone 6: Consumer Migration - Trip Monitor
+## Milestone 7: Consumer Migration - Trip Monitor
 
 **Goal**: Migrate Trip Monitor to consume new Device.StateUpdated event.
 
-### 6.1 Trip Monitor Updates
+### 7.1 Trip Monitor Updates
 
-- [ ] **TASK-026**: Replace IoT.Heartbeat subscription with `Device.StateUpdated`
+- [ ] **M07-01**: Replace IoT.Heartbeat subscription with `Device.StateUpdated`
     - Replace handler in `trip-monitor.handler.ts` (IoT.Heartbeat → Device.StateUpdated)
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/trip-monitor/src/modules/trip-monitor/trip-monitor.handler.ts#L19-L23](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/trip-monitor/src/modules/trip-monitor/trip-monitor.handler.ts#L19-L23)
     - Map `Device.StateUpdated` to existing `updateFromHeartbeat` interface
@@ -328,260 +345,343 @@ The single-stream approach intentionally bundles health, connectivity, location,
     - Track deployment/trip state per serial
     - Implement `deriveOperationState` helper (from PoC diff)
     - Use `Operations.DeviceOperationalStateChanged` (or `robotStateHistory`) instead of Trip/Deployment events
-- [ ] **TASK-028**: Add TODO comment in IoT.Heartbeat publisher for deprecation cleanup
+- [ ] **M07-03**: Add TODO comment in IoT.Heartbeat publisher for deprecation cleanup
     - Add: `// TODO(JIRA-XXX): Remove IoT.Heartbeat publish after Device.StateUpdated migration verified`
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/iot-streamer/iot-streamer.service.ts#L574-L628](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/iot-streamer/iot-streamer.service.ts#L574-L628)
 
-## Milestone 7: Consumer Migration - Dispatch Engine
+## Milestone 8: Consumer Migration - Dispatch Engine
 
 **Goal**: Migrate Dispatch Engine to consume new events instead of `Robots.StateChange`.
 
-### 7.0 Telemetry Migration (Device.StateUpdated)
+### 8.1 Telemetry Migration (Device.StateUpdated)
 
-- [ ] **TASK-028A**: Dispatch Engine telemetry → Device.StateUpdated
+- [ ] **M08-01**: Dispatch Engine telemetry → Device.StateUpdated
     - Replace `IoT.Heartbeat` subscription in `iot-heartbeat.handler.ts` with `Device.StateUpdated`
     - Ensure snapshot includes battery, health, connectivity, and location
     - _Definition of Done:_ Dispatch Engine uses `Device.StateUpdated` only; no IoT.Heartbeat dependency remains
     - _Verification:_ Metrics parity in shadow mode; manual validation that supply cache reflects battery/health/connectivity
 
-### 7.1 Operations.DeviceOperationalStateChanged
+### 8.2 Operations.DeviceOperationalStateChanged
 
-- [ ] **TASK-029**: Replace `Robots.StateChange` subscription with `Operations.DeviceOperationalStateChanged`
+- [ ] **M08-02**: Replace `Robots.StateChange` subscription with `Operations.DeviceOperationalStateChanged`
     - Replace handler in `robot-stage-change.handler.ts`
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts#L1-L217](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts#L1-L217)
     - Map fields: `operationState`, `needsMovement`, `needsMaintenance`, `needsPickup`, `undergoingMaintenance`, `hasFood`
-    - Do not expect `tripType` or `driveable` in the new payload; derive from `robotStateHistory` if needed
+    - Fields `tripType`, `attemptCancellationReason`, and `driveable` are unused and will not be in the new payload (see Unused Fields Analysis)
     - Safety: run in shadow mode first (metrics/logging only), compare counts vs legacy handler before switch
-- [ ] **TASK-030**: Add TODO comment in `Robots.StateChange` publisher(s) for cleanup
+- [ ] **M08-03**: Add TODO comment in `Robots.StateChange` publisher(s) for cleanup
     - Add: `// TODO(JIRA-XXX): Remove Robots.StateChange publish after all Dispatch Engine consumers migrated`
 
 ---
 
-## Milestone 8: Consumer Migration - Operations Service
+## Milestone 9: Consumer Migration - Operations Service
 
 **Goal**: Migrate Operations Service handlers to consume new events.
 
-### 8.0 Telemetry Migration (Device.StateUpdated)
+### 9.1 Telemetry Migration (Device.StateUpdated)
 
-- [ ] **TASK-028B**: Operations telemetry → Device.StateUpdated
+- [ ] **M09-01**: Operations telemetry → Device.StateUpdated
     - Replace `IoT.Heartbeat` subscription in `iot-heartbeat-handler.ts` with `Device.StateUpdated`
     - Update cache hydration for health/location/battery/connectivity from Device payloads
     - _Definition of Done:_ Operations uses `Device.StateUpdated` for telemetry cache; no IoT.Heartbeat dependency remains
     - _Verification:_ Manual validation of Operations robot cache values in dev/staging
 
-### 8.1 Operations.DeviceOperationalStateChanged
+### 9.2 Operations.DeviceOperationalStateChanged
 
-- [ ] **TASK-041**: Replace `Robots.StateChange` subscription with `Operations.DeviceOperationalStateChanged`
+- [ ] **M09-02**: Replace `Robots.StateChange` subscription with `Operations.DeviceOperationalStateChanged`
     - Replace handler in `robot-state-change-handler.ts`
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts#L52-L68](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts#L52-L68)
     - Map fields: `operationState`, `needsMovement`, `needsMaintenance`, `needsPickup`, `undergoingMaintenance`, `hasFood`
-    - Do not expect `tripType` or `driveable` in the new payload; use `robotStateHistory` where needed
+    - Fields `tripType`, `attemptCancellationReason`, and `driveable` are unused and will not be in the new payload (see Unused Fields Analysis)
     - Remove/unsubscribe the old `Robots.StateChange` handler in the same PR
-- [ ] **TASK-042**: Add TODO comment in `Robots.StateChange` publisher(s) for cleanup
+- [ ] **M09-03**: Add TODO comment in `Robots.StateChange` publisher(s) for cleanup
     - Add: `// TODO(JIRA-XXX): Remove Robots.StateChange publish after Operations consumers migrated`
 
 ---
 
-## Milestone 9: Consumer Migration - State Service (→ Lid Service)
+## Milestone 9A: Consumer Migration - Deliveries Service
+
+**Goal**: Migrate Deliveries Service to consume new `Device.*` events for PIN entry and lid operations.
+
+> Note: Deliveries Service consumes Robots.PinEntry, Robots.LidOpen, and Robots.LidClose for delivery flows. These should be replaced with the new Device.* equivalents published in Milestone 3.
+
+### 9A.1 PIN Entry Migration
+
+- [ ] **M09A-01**: Replace `Robots.PinEntry` subscription with `Device.PinEntry`
+    - Replace handler in `deviceless.handler.ts`
+    - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/deviceless/deviceless.handler.ts#L56-L63](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/deviceless/deviceless.handler.ts#L56-L63)
+    - Map fields: `serial`, `requestId`, `expected`, `entered`, `lidOpened`, `timestamp`, `reason`
+    - Remove/unsubscribe the old `Robots.PinEntry` handler in the same PR
+
+### 9A.2 Lid Events Migration
+
+- [ ] **M09A-02**: Replace `Robots.LidOpen` subscription with `Device.LidOpened`
+    - Replace handler in `robot.handler.ts`
+    - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/providers/robot/robot.handler.ts#L357-L368](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/providers/robot/robot.handler.ts#L357-L368)
+    - Map fields from new event payload
+    - Remove/unsubscribe the old `Robots.LidOpen` handler in the same PR
+- [ ] **M09A-03**: Replace `Robots.LidClose` subscription with `Device.LidClosed`
+    - Replace handler in `robot.handler.ts`
+    - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/providers/robot/robot.handler.ts#L371-L398](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/providers/robot/robot.handler.ts#L371-L398)
+    - Map fields: `serial`, `trigger`, `timestamp` → `serial`, `seconds_open`, `was_timeout`
+    - Remove/unsubscribe the old `Robots.LidClose` handler in the same PR
+- [ ] **M09A-04**: Add TODO comments in legacy lid event publishers for cleanup
+    - Add: `// TODO(JIRA-XXX): Remove Robots.LidOpen/LidClose publish after Deliveries consumers migrated`
+
+---
+
+## Milestone 11: Consumer Migration - State Service (→ Lid Service)
 
 **Goal**: Migrate State Service off `Robots.StateChange`; use `Operations.DeviceOperationalStateChanged` only if maintenance flags are still required.
 
-### 9.1 Operations.DeviceOperationalStateChanged (If Still Needed)
+### 11.1 Operations.DeviceOperationalStateChanged (If Still Needed)
 
-- [ ] **TASK-046**: Replace `Robots.StateChange` subscription with `Operations.DeviceOperationalStateChanged`
+- [ ] **M11-01**: Replace `Robots.StateChange` subscription with `Operations.DeviceOperationalStateChanged`
     - Replace handler in `robot-state.handler.ts`
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/robot-state.handler.ts#L18-L29](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/robot-state.handler.ts#L18-L29)
     - Update `needsMaintenance` shadow from the reduced payload; do not rely on event payloads for other fields
     - Remove/unsubscribe the old `Robots.StateChange` handler in the same PR
-- [ ] **TASK-047**: Drop direct event-driven maintenance updates if they are no longer required
+- [ ] **M11-02**: Drop direct event-driven maintenance updates if they are no longer required
     - Same handler file/permalink as above
     - If maintenance is derived elsewhere, remove event handlers entirely
-- [ ] **TASK-048**: Add TODO comment in `Robots.StateChange` publisher(s) for cleanup
+- [ ] **M11-03**: Add TODO comment in `Robots.StateChange` publisher(s) for cleanup
     - Add: `// TODO(JIRA-XXX): Remove Robots.StateChange publish after State Service consumers migrated`
 
 ---
 
+## Milestone 12: Consumer Migration - Fleet Service (Go)
+
+**Goal**: Migrate Fleet Service (`coco-services/fleet`) to consume new events instead of `Robots.StateChange` and `IoT.Heartbeat`.
+
+> Note: Fleet Service is an external Go service in the coco-services repository. It currently consumes Robots.StateChange, Robots.Deployment, and Robots.State to maintain robot state in DynamoDB.
+
+### 12.1 Telemetry Migration (Device.StateUpdated)
+
+- [ ] **M12-01**: Fleet Service telemetry → Device.StateUpdated
+    - Subscribe to `Device.StateUpdated` for location, battery, health, and connectivity data
+    - Update DynamoDB writes to use new payload structure
+    - Code reference: [robots_state_change.go](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state_change.go)
+    - _Definition of Done:_ Fleet Service receives location/telemetry from `Device.StateUpdated`
+    - _Verification:_ DynamoDB records show correct location data; metrics parity with legacy handler
+
+### 12.2 Operations.DeviceOperationalStateChanged
+
+- [ ] **M12-02**: Replace `Robots.StateChange` subscription with `Operations.DeviceOperationalStateChanged`
+    - Subscribe to `Operations.DeviceOperationalStateChanged` for operational state fields
+    - Map fields: `operationState`, `needsMovement`, `needsMaintenance`, `needsPickup`, `undergoingMaintenance`, `hasFood`
+    - Fields `tripType`, `attemptCancellationReason`, and `driveable` are unused and will not be in the new payload (see Unused Fields Analysis)
+    - Code reference: [robots_state_change.go](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state_change.go)
+    - _Definition of Done:_ Fleet Service uses new event for operational state
+    - _Verification:_ DynamoDB `fleet-robots` table shows correct operational state; no regression in downstream queries
+
+### 12.3 Robots.Deployment (Keep As-Is)
+
+- [ ] **M12-03**: Verify `Robots.Deployment` subscription still works
+    - Fleet Service should continue consuming `Robots.Deployment` for deployment location context
+    - No changes needed unless `Robots.Deployment` is deprecated later
+    - Code reference: [robots_deployment.go](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_deployment.go)
+
+### 12.4 Cleanup Legacy Handlers
+
+- [ ] **M12-04**: Remove `Robots.StateChange` handler from Fleet Service
+    - After migration verified, remove legacy handler
+    - Code reference: [robots_state_change.go](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state_change.go)
+- [ ] **M12-05**: Remove `Robots.State` handler and publisher
+    - `Robots.State` is a full robot snapshot republished by Dispatch Engine for Fleet Service
+    - **This event is deprecated** and will be deleted—replaced by `Device.StateUpdated` (telemetry) + `Operations.DeviceOperationalStateChanged` (operational state)
+    - Remove handler from Fleet Service: [robots_state.go](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state.go)
+    - Remove publisher from Dispatch Engine: [amqp-publisher.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/dispatch-engine/src/shared/amqp-publisher.service.ts#L65-L69)
+
 ---
 
-## Milestone 10: Publisher Migration - Remove Robots.StateChange Publishers
+## Milestone 13: Publisher Migration - Remove Robots.StateChange Publishers
 
 **Goal**: Remove `publishRobotStateUpdated` calls from all services now that consumers use `Operations.DeviceOperationalStateChanged`.
 
-### 10.1 Operations Service Cleanup
+### 13.1 Operations Service Cleanup
 
-- [ ] **TASK-049**: Remove `publishRobotStateUpdated` from `robot-fleet-management.service.ts`
+- [ ] **M13-01**: Remove `publishRobotStateUpdated` from `robot-fleet-management.service.ts`
     - Undeployment no longer needs to publish state change
     - Deployment no longer needs to publish state change
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fleet-management/services/robot-fleet-management.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fleet-management/services/robot-fleet-management.service.ts)
-- [ ] **TASK-050**: Remove `publishRobotStateUpdated` from `fo-requests.service.ts`
+- [ ] **M13-02**: Remove `publishRobotStateUpdated` from `fo-requests.service.ts`
     - FO request creation no longer needs to publish state change
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-requests/fo-requests.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-requests/fo-requests.service.ts)
 - [ ] **TASK-051**: Remove `publishRobotStateUpdated` from `fo-tasks.service.ts`
     - Task creation/completion no longer needs to publish state change
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-tasks/fo-tasks.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-tasks/fo-tasks.service.ts)
-- [ ] **TASK-052**: Remove `publishRobotStateUpdated` from `delivery.handlers.ts`
+- [ ] **M13-04**: Remove `publishRobotStateUpdated` from `delivery.handlers.ts`
     - Delivery termination no longer needs to publish state change
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-tasks/handlers/delivery.handlers.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/fo-tasks/handlers/delivery.handlers.ts)
 - [ ] **TASK-053**: Remove `publishRobotStateUpdated` from `pilot-trips.publisher.ts`
     - Trip completion/cancellation no longer rely on robot state events; use `robotStateHistory`
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/publishers/pilot-trips.publisher.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/publishers/pilot-trips.publisher.ts)
-- [ ] **TASK-054**: Remove `publishRobotStateUpdated` from `pilot-trips.repository.ts`
+- [ ] **M13-05**: Remove `publishRobotStateUpdated` from `pilot-trips.repository.ts`
     - Trip resumption no longer relies on robot state events; use `robotStateHistory`
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/repositories/pilot-trips.repository.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/repositories/pilot-trips.repository.ts)
-- [ ] **TASK-055**: Remove `publishRobotStateUpdated` from `pilot-trips.service.ts`
+- [ ] **M13-06**: Remove `publishRobotStateUpdated` from `pilot-trips.service.ts`
     - Trip start no longer relies on robot state events; use `robotStateHistory`
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/services/pilot-trips.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/trips/services/pilot-trips.service.ts)
-- [ ] **TASK-056**: Remove `publishRobotStateUpdated` from `robots.service.ts`
+- [ ] **M13-07**: Remove `publishRobotStateUpdated` from `robots.service.ts`
     - Grounding robot no longer needs separate state change publish
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/robots/services/robots.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/robots/services/robots.service.ts)
 
-### 10.2 Deliveries Service Cleanup
+### 13.2 Deliveries Service Cleanup
 
-- [ ] **TASK-057**: Remove `publishRobotStateUpdated` from `robot.service.ts`
+- [ ] **M13-08**: Remove `publishRobotStateUpdated` from `robot.service.ts`
     - Loading robot no longer relies on robot state events; use Deliveries.AttemptTransitioned/ProviderUpdated + APIs
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/providers/robot/robot.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/providers/robot/robot.service.ts)
-- [ ] **TASK-058**: Remove `publishRobotStateUpdated` from `delivery.service.ts`
+- [ ] **M13-09**: Remove `publishRobotStateUpdated` from `delivery.service.ts`
     - Rescue attempt failure no longer relies on robot state events; use Deliveries.AttemptTransitioned/ProviderUpdated + APIs
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/delivery/service/delivery.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/delivery/service/delivery.service.ts)
-- [ ] **TASK-059**: Remove `publishRobotStateUpdated` method from `amqp-publisher.service.ts`
+- [ ] **M13-10**: Remove `publishRobotStateUpdated` method from `amqp-publisher.service.ts`
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/shared/amqp-publisher.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/shared/amqp-publisher.service.ts)
 
-### 10.3 State Service Cleanup
+### 13.3 State Service Cleanup
 
-- [ ] **TASK-060**: Remove `publishRobotStateUpdated` from `state-transition.subscriber.ts`
+- [ ] **M13-11**: Remove `publishRobotStateUpdated` from `state-transition.subscriber.ts`
     - State transitions no longer need to publish Robots.StateChange
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/state-machine/listeners/state-transition.subscriber.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/state-machine/listeners/state-transition.subscriber.ts)
-- [ ] **TASK-061**: Remove `publishRobotStateUpdated` method from `publisher.service.ts`
+- [ ] **M13-12**: Remove `publishRobotStateUpdated` method from `publisher.service.ts`
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/publisher/services/publisher.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/publisher/services/publisher.service.ts)
-- [ ] **TASK-062**: Remove `PublisherService` dependency from `state-transition.service.ts`
+- [ ] **M13-13**: Remove `PublisherService` dependency from `state-transition.service.ts`
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/state-transition.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/state-transition.service.ts)
 
-### 10.4 Operations Service Publisher Cleanup
+### 13.4 Operations Service Publisher Cleanup
 
-- [ ] **TASK-063**: Remove `publishRobotStateUpdated` method from Operations `publisher.service.ts`
+- [ ] **M13-14**: Remove `publishRobotStateUpdated` method from Operations `publisher.service.ts`
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/publisher/services/publisher.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/publisher/services/publisher.service.ts)
 
 ---
 
-## Milestone 11: API Migration - Device Read gRPC Endpoints
+## Milestone 14: API Migration - Device Read gRPC Endpoints
 
 **Goal**: Move device-related read endpoints to gRPC in the new Device service.
 
-### 11.1 Device Info Endpoints (gRPC)
+### 14.1 Device Info Endpoints (gRPC)
 
-- [ ] **TASK-064**: Implement `ListDevices` gRPC in Device
+- [ ] **M14-01**: Implement `ListDevices` gRPC in Device
     - List devices with filtering
     - Data from device registry + cache
-- [ ] **TASK-065**: Implement `GetDevice` gRPC in Device
+- [ ] **M14-02**: Implement `GetDevice` gRPC in Device
     - Single device details
     - Combine registry + latest state
-- [ ] **TASK-066**: Implement `BatchGetDeviceGps` gRPC in Device
+- [ ] **M14-03**: Implement `BatchGetDeviceGps` gRPC in Device
     - Batch GPS locations from cache
-- [ ] **TASK-067**: Implement `GetLatestDeviceStates` gRPC in Device
+- [ ] **M14-04**: Implement `GetLatestDeviceStates` gRPC in Device
     - Latest device states from cache
 
-### 11.2 Heartbeat History Endpoints (gRPC)
+### 14.2 Heartbeat History Endpoints (gRPC)
 
-- [ ] **TASK-068**: Implement `ListDeviceHeartbeatHistory` gRPC in Device
+- [ ] **M14-05**: Implement `ListDeviceHeartbeatHistory` gRPC in Device
     - Query historical heartbeat data
     - Support time range filtering
-- [ ] **TASK-069**: Implement `GetLatestDeviceHeartbeat` gRPC in Device
+- [ ] **M14-06**: Implement `GetLatestDeviceHeartbeat` gRPC in Device
     - Latest heartbeat per device
 
-### 11.3 Command History Endpoints (gRPC)
+### 14.3 Command History Endpoints (gRPC)
 
-- [ ] **TASK-070**: Implement `ListDeviceCommandResponses` gRPC in Device
+- [ ] **M14-07**: Implement `ListDeviceCommandResponses` gRPC in Device
     - Recent command responses
-- [ ] **TASK-071**: Implement `ListDeviceCommandRequests` gRPC in Device
+- [ ] **M14-08**: Implement `ListDeviceCommandRequests` gRPC in Device
     - Recent command requests
-- [ ] **TASK-072**: Implement `GetDeviceCommandResponse` gRPC in Device
+- [ ] **M14-09**: Implement `GetDeviceCommandResponse` gRPC in Device
     - Lookup by request ID
 
 ---
 
-## Milestone 12: API Migration - State Service gRPC Endpoints
+## Milestone 15: API Migration - State Service gRPC Endpoints
 
 **Goal**: Move state-related read endpoints to Device gRPC.
 
-### 12.1 State Endpoints (gRPC)
+### 15.1 State Endpoints (gRPC)
 
-- [ ] **TASK-073**: Implement `GetRobotOperationalState` gRPC in Device
+- [ ] **M15-01**: Implement `GetRobotOperationalState` gRPC in Device
     - Current robot operational state
     - Derive from deployment + trip + issues
-- [ ] **TASK-074**: Implement `ListRobotStateHistory` gRPC in Device
+- [ ] **M15-02**: Implement `ListRobotStateHistory` gRPC in Device
     - State history query
     - Migrate from State Service
 
-### 12.2 Connectivity Endpoints (gRPC)
+### 15.2 Connectivity Endpoints (gRPC)
 
-- [ ] **TASK-075**: Implement `GetRobotConnectivityOverall` gRPC in Device
+- [ ] **M15-03**: Implement `GetRobotConnectivityOverall` gRPC in Device
     - Aggregated connectivity status
     - From DriveU + IoT sources
-- [ ] **TASK-076**: Implement `ListRobotConnectivityHistory` gRPC in Device
+- [ ] **M15-04**: Implement `ListRobotConnectivityHistory` gRPC in Device
     - Connectivity history query
 
 ---
 
-## Milestone 13: API Migration - Device Command gRPC Endpoints
+## Milestone 16: API Migration - Device Command gRPC Endpoints
 
 **Goal**: Move device command endpoints to the new Device gRPC service.
 
-### 13.1 Lid Commands (gRPC)
+### 16.1 Lid Commands (gRPC)
 
-- [ ] **TASK-077**: Implement `SendLidCommand` gRPC in Device
+- [ ] **M16-01**: Implement `SendLidCommand` gRPC in Device
     - Direct lid command to device
     - Write to IoT shadow
-- [ ] **TASK-078**: Implement `SendLidCommandWithContext` gRPC in Device
+- [ ] **M16-02**: Implement `SendLidCommandWithContext` gRPC in Device
     - Synchronous lid command with state context
     - Support PIN flow integration
 
-### 13.2 Reset Commands (gRPC)
+### 16.2 Reset Commands (gRPC)
 
-- [ ] **TASK-079**: Implement `SendSoftReset` gRPC in Device
-- [ ] **TASK-080**: Implement `SendHardReset` gRPC in Device
-- [ ] **TASK-081**: Implement `SendModemReset` gRPC in Device
-- [ ] **TASK-082**: Implement `SendSwitchSimBackup` gRPC in Device
-- [ ] **TASK-083**: Implement `SendResetGps` gRPC in Device
+- [ ] **M16-03**: Implement `SendSoftReset` gRPC in Device
+- [ ] **M16-04**: Implement `SendHardReset` gRPC in Device
+- [ ] **M16-05**: Implement `SendModemReset` gRPC in Device
+- [ ] **M16-06**: Implement `SendSwitchSimBackup` gRPC in Device
+- [ ] **M16-07**: Implement `SendResetGps` gRPC in Device
 
-### 13.3 Other Commands (gRPC)
+### 16.3 Other Commands (gRPC)
 
-- [ ] **TASK-084**: Implement `SendLightsCommand` gRPC in Device
-- [ ] **TASK-085**: Implement `SignalLoadFailure` gRPC in Device
-- [ ] **TASK-086**: Implement `SendDoordashVerifyFailure` gRPC in Device
-- [ ] **TASK-087**: Implement `StartWebRtcAuth` gRPC in Device
+- [ ] **M16-08**: Implement `SendLightsCommand` gRPC in Device
+- [ ] **M16-09**: Implement `SignalLoadFailure` gRPC in Device
+- [ ] **M16-10**: Implement `SendDoordashVerifyFailure` gRPC in Device
+- [ ] **M16-11**: Implement `StartWebRtcAuth` gRPC in Device
 
 ---
 
-## Milestone 14: API Migration - State Service Write gRPC Endpoints
+## Milestone 17: API Migration - State Service Write gRPC Endpoints
 
 **Goal**: Move state transition and PIN-related endpoints to Device gRPC.
 
-### 14.1 State Transition (gRPC)
+### 17.1 State Transition (gRPC)
 
-- [ ] **TASK-088**: Implement `RequestRobotStateTransition` gRPC in Device
-    - This becomes issue-based in new architecture
-    - Map old transitions to issue creation/clearing
-    - GROUNDED → create MANUAL_GROUND issue
-    - Clearing GROUNDED → clear issues
+- [ ] **M17-01**: Implement `RequestRobotStateTransition` gRPC in Device
+    - Device API acts as a proxy to State Service's transition engine
+    - State Service remains the owner of transition validation (graph, guards, state machine logic)
+    - Device API forwards requests to State Service's `/state/:serial/request-transition` endpoint
+    - _Rationale:_ Single entry point for device operations while preserving State's transition ownership
 
-### 14.2 PIN & Route Endpoints (gRPC)
+### 17.2 PIN & Route Endpoints (gRPC)
 
-- [ ] **TASK-089**: Implement `SetUnlockPin` gRPC in Device
+- [ ] **M17-02**: Implement `SetUnlockPin` gRPC in Device
     - Temporary PIN for pickup flows
-- [ ] **TASK-090**: Implement `RemoveUnlockPin` gRPC in Device
+- [ ] **M17-03**: Implement `RemoveUnlockPin` gRPC in Device
     - Clear temporary PIN
-- [ ] **TASK-091**: Implement `SetRouteId` gRPC in Device
+- [ ] **M17-04**: Implement `SetRouteId` gRPC in Device
     - Associate robot with route
+
+### 17.3 Shadow Write Endpoints (gRPC)
+
+- [ ] **M17-05**: Implement `UpdateDeviceShadow` gRPC in Device
+    - Write to the device's `status` named shadow in AWS IoT
+    - Supports fields: `operation_state`, `dp_needs_maintenance`, `pin_unlock`, `route_id`
+    - Also updates IoT thing `state` attribute for indexing (when `operation_state` is set)
+    - Consolidates all shadow write operations behind Device API
+    - Permalink (current shadow writes): [state.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/state.service.ts#L210-L320)
 
 ---
 
-## Milestone 15: Client Migration
+## Milestone 18: Client Migration
 
 **Goal**: Update all clients to use new Device gRPC endpoints (via internal client or API).
 
-### 15.1 MRO Web
+### 18.1 MRO Web
 
-- [ ] **TASK-092**: Update MRO to use Device for device endpoints
+- [ ] **M18-01**: Update MRO to use Device for device endpoints
     - `useRobotsList.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mro/src/features/device/modules/robots/api/useRobotsList.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mro/src/features/device/modules/robots/api/useRobotsList.ts))
     - `useRobotDetails.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mro/src/features/device/modules/robots/api/useRobotDetails.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mro/src/features/device/modules/robots/api/useRobotDetails.ts))
     - `useRobotGeolocation.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mro/src/features/device/modules/robots/api/useRobotGeolocation.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mro/src/features/device/modules/robots/api/useRobotGeolocation.ts))
@@ -597,9 +697,9 @@ The single-stream approach intentionally bundles health, connectivity, location,
     - `useSendLidCommand.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mro/src/features/device/modules/robots/api/commands/useSendLidCommand.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mro/src/features/device/modules/robots/api/commands/useSendLidCommand.ts))
     - `useChangeStateStatus.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mro/src/features/device/modules/robots/api/state/useChangeStateStatus.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mro/src/features/device/modules/robots/api/state/useChangeStateStatus.ts))
 
-### 15.2 Mission Control
+### 18.2 Mission Control
 
-- [ ] **TASK-093**: Update Mission Control to use Device
+- [ ] **M18-02**: Update Mission Control to use Device
     - `device.api.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mission-control/src/api/device.api.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mission-control/src/api/device.api.ts))
     - `robot-state.api.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mission-control/src/api/robot-state.api.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mission-control/src/api/robot-state.api.ts))
     - `useRobotDetails.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mission-control/src/features/device/api/robots/useRobotDetails.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mission-control/src/features/device/api/robots/useRobotDetails.ts))
@@ -607,17 +707,17 @@ The single-stream approach intentionally bundles health, connectivity, location,
     - `useCommandsResponses.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mission-control/src/features/device/api/robots/commands/useCommandsResponses.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mission-control/src/features/device/api/robots/commands/useCommandsResponses.ts))
     - `useCommandsRequests.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mission-control/src/features/device/api/robots/commands/useCommandsRequests.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/mission-control/src/features/device/api/robots/commands/useCommandsRequests.ts))
 
-### 15.3 Field Ops App
+### 18.3 Field Ops App
 
-- [ ] **TASK-094**: Update Field Ops app to use Device
+- [ ] **M18-03**: Update Field Ops app to use Device
     - `useReportBotIssue.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/client/field-ops/src/hooks/mutations/useReportBotIssue.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/client/field-ops/src/hooks/mutations/useReportBotIssue.ts))
     - `useUpdateBotLid.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/client/field-ops/src/hooks/mutations/useUpdateBotLid.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/client/field-ops/src/hooks/mutations/useUpdateBotLid.ts))
     - `useUpdateBotLights.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/client/field-ops/src/hooks/mutations/useUpdateBotLights.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/client/field-ops/src/hooks/mutations/useUpdateBotLights.ts))
     - `useRobotLocation.ts` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/client/field-ops/src/hooks/queries/useRobotLocation.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/client/field-ops/src/hooks/queries/useRobotLocation.ts))
 
-### 15.4 Pilot Web
+### 18.4 Pilot Web
 
-- [ ] **TASK-095**: Update Pilot web to use Device
+- [ ] **M18-04**: Update Pilot web to use Device
     - `useSendSoftReset.tsx` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/pilot/src/hooks/useSendSoftReset.tsx](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/pilot/src/hooks/useSendSoftReset.tsx))
     - `useSendModemReset.tsx` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/pilot/src/hooks/useSendModemReset.tsx](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/pilot/src/hooks/useSendModemReset.tsx))
     - `useSendHardReset.tsx` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/pilot/src/hooks/useSendHardReset.tsx](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/pilot/src/hooks/useSendHardReset.tsx))
@@ -625,42 +725,53 @@ The single-stream approach intentionally bundles health, connectivity, location,
     - `useSendResetGPS.tsx` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/pilot/src/hooks/useSendResetGPS.tsx](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/pilot/src/hooks/useSendResetGPS.tsx))
     - `route.ts` (set-route-id) (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/pilot/src/experimental/lib/route.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/pilot/src/experimental/lib/route.ts))
 
-### 15.5 Merchant Fleet
+### 18.5 Merchant Fleet
 
-- [ ] **TASK-096**: Update Merchant Fleet to use Device
+- [ ] **M18-05**: Update Merchant Fleet to use Device
     - `useToggleRobotLid.tsx` (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/merchant-fleet/src/hooks/useToggleRobotLid.tsx](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/web/merchant-fleet/src/hooks/useToggleRobotLid.tsx))
 
-### 15.6 Service-to-Service Clients
+### 18.6 Service-to-Service Clients
 
-- [ ] **TASK-097**: Update State Service to call Device for lid commands
+- [ ] **M18-06**: Update State Service to call Device for lid commands
     - `state.service.ts` → Device instead of direct Device Service (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/state.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/state.service.ts))
-- [ ] **TASK-098**: Update Deliveries Service deviceless client
+- [ ] **M18-07**: Update Deliveries Service deviceless client
     - `deviceless.client.ts` → Device (Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/deviceless/deviceless.client.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/deliveries/src/modules/deviceless/deviceless.client.ts))
+- [ ] **M18-08**: Update State Service to call Device API for shadow writes
+    - Replace direct `AwsIotService.upsertShadow()` calls with Device API `UpdateDeviceShadow`
+    - Affects: `addNewState()` (writes `operation_state`), `updateNeedsMaintenance()` (writes `dp_needs_maintenance`)
+    - Affects: `setPin()`, `unsetPin()`, `setRouteId()` (already have Device API equivalents via M17-02/03/04, but shadow writes should go through M17-05)
+    - Prerequisite for eventual State Service decommissioning
+    - Permalink: [state.service.ts](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/state.service.ts#L210-L320)
 
 ---
 
-## Milestone 16: Final Cleanup
+## Milestone 19: Final Cleanup
 
 **Goal**: Remove deprecated code, exchanges, and old services.
 
-### 16.1 Remove Old Event Handlers
+### 19.1 Remove Old Event Handlers
 
-- [ ] **TASK-099**: Remove `Robots.StateChange` handler from Dispatch Engine
+- [ ] **M19-01**: Remove `Robots.StateChange` handler from Dispatch Engine
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts#L1-L217](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/dispatch-engine/src/modules/eventsink/handlers/robot-stage-change.handler.ts#L1-L217)
-- [ ] **TASK-100**: Remove `Robots.StateChange` handler from Operations Service
+- [ ] **M19-02**: Remove `Robots.StateChange` handler from Operations Service
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts#L52-L198](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts#L52-L198)
-- [ ] **TASK-101**: Remove `Robots.StateChange` handler from State Service
+- [ ] **M18-03**: Remove `Robots.StateChange` handler from State Service
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/robot-state.handler.ts#L17-L52](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/state/src/state/robot-state.handler.ts#L17-L52)
-- [ ] **TASK-102**: Remove `IoT.Heartbeat` handler from Trip Monitor (after Device.StateUpdated verified)
+- [ ] **M19-04**: Remove `Robots.StateChange` and `Robots.State` handlers from Fleet Service (Go)
+    - After M12 migration verified, remove legacy handlers from `coco-services/fleet`
+    - Code references:
+        - [robots_state_change.go](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state_change.go)
+        - [robots_state.go](https://github.com/cocorobotics/coco-services/blob/master/fleet/internal/consumer/legacy_robots_consumer/robots_state.go)
+- [ ] **M19-05**: Remove `IoT.Heartbeat` handler from Trip Monitor (after Device.StateUpdated verified)
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/trip-monitor/src/modules/trip-monitor/trip-monitor.handler.ts#L19-L33](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/service/trip-monitor/src/modules/trip-monitor/trip-monitor.handler.ts#L19-L33)
 
-### 16.2 Remove Old Exchanges
+### 19.2 Remove Old Exchanges
 
-- [ ] **TASK-103**: Deprecate `Robots.StateChange` exchange
+- [ ] **M19-06**: Deprecate `Robots.StateChange` exchange
     - Mark as deprecated in `names.ts`
     - Schedule removal after monitoring period
     - Permalink: [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/names.ts#L139-L148](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/names.ts#L139-L148)
-- [ ] **TASK-104**: Remove `Robots.StateChange` from exchange definitions
+- [ ] **M18-07**: Remove `Robots.StateChange` from exchange definitions
     - After all consumers migrated
     - Permalinks:
         - [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/names.ts#L139-L148](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/names.ts#L139-L148)
@@ -668,22 +779,22 @@ The single-stream approach intentionally bundles health, connectivity, location,
         - [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/routing-keys.builders.ts#L192-L192](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/routing-keys.builders.ts#L192-L192)
         - [https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/routing-keys.types.ts#L219-L219](https://github.com/cocorobotics/delivery-platform/blob/32d08502ce026882ba65ce22062e5704399d0337/lib/common/src/exchanges/routing-keys.types.ts#L219-L219)
 
-### 16.3 Service Cleanup
+### 19.3 Service Cleanup
 
-- [ ] **TASK-105**: Remove telemetry processing from State Service
+- [ ] **M19-08**: Remove telemetry processing from State Service
     - Move becomes Lid Service only
-- [ ] **TASK-106**: Remove connectivity handling from State Service
+- [ ] **M19-09**: Remove connectivity handling from State Service
     - Moved to Device
-- [ ] **TASK-107**: Decommission the legacy Device Service
+- [ ] **M19-10**: Decommission the legacy Device Service
     - After Device has full coverage, and all consumers are updated, we should be able to turn down the legacy device service, and delete its code
 
-### 16.4 Documentation
+### 19.4 Documentation
 
-- [ ] **TASK-109**: Update architecture documentation
+- [ ] **M19-11**: Update architecture documentation
     - Document Device service
     - Update event flow diagrams
     - Update API documentation
-- [ ] **TASK-110**: Remove all cleanup TODO comments
+- [ ] **M19-12**: Remove all cleanup TODO comments
     - Search for `TODO(JIRA-XXX)` comments added during migration
     - Verify each is addressed
     - Remove comments
@@ -746,6 +857,8 @@ Consider feature flags for:
 - `device.publish-events`: Enable new event publishing
 - `device.api-enabled`: Enable new API endpoints
 - Per-consumer flags to switch event source
+- Shadow mode: new handlers should emit metrics/logs only for parity checks before switching behavior
+- Mutual exclusivity: add the same flag to both old and new consumers so only one processes events at a time
 
 ### Rollback Plan
 
@@ -755,27 +868,104 @@ Consider feature flags for:
 
 ---
 
+## Out of Scope / Future Phase
+
+The following are intentionally deferred from this migration to maintain focus on the primary goals: single-responsibility services and single ownership of device-related functionality.
+
+### State Machine / Transition Engine Migration
+
+**Current state:** State Service owns the state machine that validates and applies device operational state transitions (`OFF_DUTY`, `PARKED`, `ON_TRIP`, `GROUNDED`). This includes:
+
+- The transition graph (`robot-graph.ts`) defining allowed state transitions
+- Transition validation logic (checking if a transition is valid from the current state)
+- Guards that can block transitions
+- State history writes to the database
+- Shadow writes for `operation_state`
+
+**Decision:** State Service remains the transition engine for this migration phase. The Device API (M17-01) acts as a proxy to State Service, forwarding transition requests rather than implementing transition logic.
+
+**Rationale:**
+
+- The state machine is tightly coupled to State Service's database (`stateHistory`, `transitionRequest` tables) and event system
+- Migrating the transition engine would require significant refactoring with limited immediate benefit
+- The primary goal of this migration is single-responsibility ownership of device telemetry and events, not operational state transitions
+- State transitions have few external consumers; the complexity of migration outweighs the benefits for this phase
+
+**Future considerations:** If/when Operations needs to own state transitions entirely, a dedicated migration plan should address:
+
+- Moving the transition graph definition to Operations
+- Moving guard logic to Operations
+- Moving `stateHistory` writes to Operations
+- Replacing `State.TransitionCompleted` events with Operations-issued transition events
+- Updating Device API to proxy to Operations instead of State
+
+### OperationState Cleanup
+
+**Current state:** `operationState` is a derived field that exists in multiple places:
+
+- Written to device shadow as `operation_state`
+- Published in `Robots.StateChange` (being replaced by `Operations.DeviceOperationalStateChanged`)
+- Stored in `robotStateHistory`
+
+**Decision:** This migration focuses on event consolidation (`Operations.DeviceOperationalStateChanged`) rather than fundamental redesign of `operationState` semantics.
+
+**Future considerations:** A future phase could:
+
+- Evaluate whether `operationState` should be device-reported vs. backend-derived
+- Consider whether the shadow write is still necessary or if consumers should rely on events
+- Simplify the state model if operational needs change
+
+---
+
 ## Milestone Dependencies
 
-```
-M1 (Foundation) ─────────────────────────────────────────────────────────────────┐
-                                                                                 │
-M2 (Heartbeat/Health) ──┬─── M6 (Trip Monitor) ──────────────────────────────────┤
-                        │                                                        │
-M3 (Connectivity/Lid) ──┼────────────────────────────────────────────────────────┤
-                        │                                                        │
-M4 (Robot State APIs) ──┬── M5 (API Migration) ──┬── M7 (Dispatch Engine) ───┬── M10 (Remove Publishers)─┤
-                        │                        │                          │                             │
-                        │                        ├── M8 (Operations) ────────┤                             │
-                        │                        │                          │                             │
-                        │                        └── M9 (State Service) ─────┘                             │
-                                                                                 │
-M11 (Read APIs) ─────────┬─── M15 (Client Migration) ─── M16 (Final Cleanup) ────┘
-                         │
-M12 (State APIs) ────────┤
-                         │
-M13 (Command APIs) ──────┤
-                         │
-M14 (Write APIs) ────────┘
+```mermaid
+graph TD
+    %% Main Architecture Flow
+    M1[M1 Foundation] --> M2[M2 StateUpdated/Health]
+    M1 --> M3[M3 Connectivity/Lid/Battery/PIN]
+    M1 --> M4[M4 DeviceOperationalStateChanged]
+    M1 --> M5[M5 OperationState Inputs]
+
+    %% M2 Dependencies
+    M2 --> M7[M7 Trip Monitor]
+    M2 --> M8.1[M8.1 Dispatch Telemetry]
+    M2 --> M9.1[M9.1 Operations Telemetry]
+    M2 --> M12.1[M12.1 Fleet Telemetry]
+
+    %% M4 Dependencies
+    M4 --> M6[M6 State Transition Ownership Shift]
+    M4 --> M8.2[M8.2 Dispatch Engine]
+    M4 --> M9.2[M9.2 Operations]
+    M4 --> M11[M11 State Service]
+    M4 --> M12.2[M12.2 Fleet Operations]
+    M5 --> M6
+
+    %% Fleet Service (Go) - external coco-services repo
+    M12.1 --> M12[M12 Fleet Service]
+    M12.2 --> M12
+
+    %% Deliveries Service - depends on M3 for Device.Lid* and Device.PinEntry
+    M3 --> M9A[M9A Deliveries Service]
+
+    %% Publisher cleanup flow
+    M11 --> M13[M13 Remove Robots.StateChange Publishers]
+    M12 --> M13
+    M9A --> M13
+
+    %% API and Client Flow
+    M1 --> M14[M14 Device Read APIs]
+    M1 --> M15[M15 State Read APIs]
+    M1 --> M16[M16 Device Commands]
+    M1 --> M17[M17 State Write APIs]
+
+    M14 --> M18[M18 Client Migration]
+    M15 --> M18
+    M16 --> M18
+    M17 --> M18
+
+    %% Final Cleanup Convergence
+    M13 --> M19[M19 Final Cleanup]
+    M18 --> M19
 
 ```

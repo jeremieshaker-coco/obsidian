@@ -27,15 +27,16 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "personal/2026-01-21.md",
+                "file": "personal/2026-01-22.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "2026-01-21"
+              "title": "2026-01-22"
             }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -208,14 +209,15 @@
       "smart-connections:Smart Connections: Open random connection": true
     }
   },
-  "active": "21b796371860b777",
+  "active": "4494aedf8290280b",
   "lastOpenFiles": [
     "personal/2026-01-21.md",
+    "personal/2026-01-22.md",
     "tasks/device-gateway-implementation-plan.md",
+    "research/DEVICE_EVENTS_ENDPOINTS.md",
     "designs/Device API Redesign v3.md",
     "savedchats/cursor_design_read_only_device_api.md",
     "designs/Device API Redesign v2.md",
-    "research/DEVICE_EVENTS_ENDPOINTS.md",
     "research/DEVICE_EVENTS.md",
     "tmp/diff.md",
     "tmp/diff.txt",
@@ -237,7 +239,6 @@
     "reference/Task.md",
     "Lid Cycle Service.md",
     "FoTaskModel Table.md",
-    "reference/table/Database Schema Index.md",
     "reference/table",
     "savedchats",
     "Users/jeremieshaker",
