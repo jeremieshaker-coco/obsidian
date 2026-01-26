@@ -13,9 +13,9 @@ This doc summarizes HTTP endpoints that *change* device/robot state or issue com
 | `POST /state/set-route-id`                                                             | Pilot web (experimental) (`web/pilot/src/experimental/lib/route.ts`)                                                                                                                                                                                                                                             | Associate a robot with a route during pilot/teleop flows.                                                                             |
 | `POST /state/set-unlock-pin`                                                           | No in-repo caller found                                                                                                                                                                                                                                                                                          | Set a temporary unlock PIN during customer pickup/assist flows.                                                                       |
 | `POST /state/remove-unlock-pin`                                                        | No in-repo caller found                                                                                                                                                                                                                                                                                          | Clear the temporary unlock PIN after pickup/assist flows.                                                                             |
-| `GET /state/:serial/current`                                                           | MRO web (`web/mro/src/features/device/modules/robots/api/state/useRobotState.ts`)                                                                                                                                                                                                                                | Show the robot’s current state in MRO device detail/overview panels.                                                                   |
+| `GET /state/:serial/current`                                                           | MRO web (`web/mro/src/features/device/modules/robots/api/state/useRobotState.ts`)                                                                                                                                                                                                                                | Show the robot’s current state in MRO device detail/overview panels.                                                                  |
 | `POST /state/history`                                                                  | MRO web (`web/mro/src/features/device/modules/robots/api/state/useRobotStateHistory/useRobotStateHistory.ts`)                                                                                                                                                                                                    | Load state history for audits and troubleshooting in the MRO state timeline.                                                          |
-| `GET /connectivity/:serial/overall`                                                    | MRO web (`web/mro/src/features/device/modules/robots/api/state/useRobotConnectivity.ts`), Mission Control (`web/mission-control/src/api/robot-state.api.ts`)                                                                                                                                                      | Display online/offline status for ops monitoring and readiness decisions.                                                             |
+| `GET /connectivity/:serial/overall`                                                    | MRO web (`web/mro/src/features/device/modules/robots/api/state/useRobotConnectivity.ts`), Mission Control (`web/mission-control/src/api/robot-state.api.ts`)                                                                                                                                                     | Display online/offline status for ops monitoring and readiness decisions.                                                             |
 | `POST /connectivity/history`                                                           | MRO web (`web/mro/src/features/device/modules/robots/api/state/useRobotConnectivityHistory/useRobotConnectivityHistory.ts`)                                                                                                                                                                                      | Review connectivity dropouts over time while debugging comms issues.                                                                  |
 
 ---
@@ -91,6 +91,23 @@ The device service exposes API-key protected endpoints under `POST /integration/
 | `GET /integration/devices/commands/responses/latest` | No in-repo caller found | Fetch recent command responses via integration API. |
 | `GET /integration/devices/commands/requests/latest` | No in-repo caller found | Fetch recent command requests via integration API. |
 | `GET /integration/devices/commands/response` | No in-repo caller found | Fetch a command response by request ID via integration API. |
+
+---
+
+## Internal Read-Path Dependencies (Non-HTTP/Non-AMQP)
+
+These are internal data sources/caches that back HTTP responses and readiness logic. They are not external interfaces, but they must be migrated alongside event changes.
+
+| Area | Current Source | Fallbacks | Impacted Use Cases |
+| --- | --- | --- | --- |
+| Ephemeral device info (battery/location) | `RobotEphemeralDataService` cache (hydrated by IoT heartbeat handler) | Dynamo via `StateTrackerService` | `GET /robots`, `GET /robots/:serial/location`, readiness checks |
+| Ephemeral robot state (state/comment) | `RobotEphemeralDataService` cache (hydrated by `State.TransitionCompleted`) | State Service RPC (`getCurrentState`) | `GET /robots/:serial/state`, `GET /robots` |
+| Connectivity status | `RobotEphemeralDataService` cache (hydrated by `State.ConnectivityOverallChanged`) | None (if cache miss, treated as unknown/offline) | `GET /robots/:serial/ready`, readiness checks |
+| Health status | Redis (hydrated by IoT heartbeat handler via `saveBotHeartbeat`) | None (cache miss returns null) | `GET /robots/:serial/ready`, `GET /robots` |
+
+Notes:
+- These dependencies are internal read paths, not external interfaces.
+- Cache rows note the hydration source event/handler for precision.
 
 ---
 

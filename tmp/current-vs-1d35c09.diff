@@ -1,0 +1,1575 @@
+diff --git a/infra/configs/mc/values.yaml.tpl b/infra/configs/mc/values.yaml.tpl
+index c90186d466..ad3ab50f9c 100644
+--- a/infra/configs/mc/values.yaml.tpl
++++ b/infra/configs/mc/values.yaml.tpl
+@@ -26,5 +26,5 @@ headers:
+     StrictTransportSecurity: "max-age=31536000; includeSubDomains; preload"
+   prod:
+     ReportingEndpoints: csp-endpoint="https://browser-intake-datadoghq.com/api/v2/logs?dd-api-key=pub0d4275e3776b136febb1845b48f3aebc&dd-evp-origin=content-security-policy&ddsource=csp-report&ddtags=service:mc%%2Cenv:${namespace}"
+-    ContentSecurityPolicyReportOnly: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://cdn.segment.com https://edge.fullstory.com https://stats.pusher.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.mapbox.com; font-src 'self' https://fonts.gstatic.com https://edge.fullstory.com https://r2cdn.perplexity.ai data:; img-src 'self' data: blob: https://googleapis.com https://cdn.delivery.cocodelivery.com https://coco-cdn-dev.s3.us-west-2.amazonaws.com https://gravatar.com https://cdn.auth0.com; media-src 'self' https://cdn.delivery.cocodelivery.com; worker-src blob:; connect-src 'self' blob: https://datadoghq.com https://rum.browser-intake-datadoghq.com https://logs.browser-intake-datadoghq.com https://browser-intake-datadoghq.com https://*.datadoghq.com https://launchdarkly.com https://clientstream.launchdarkly.com https://*.cocodelivery.com https://mapbox.com *.pusher.com https://sentry.io https://gstatic.com https://auth0.com https://amplitude.com https://cdn.segment.com https://api.segment.io https://maps.googleapis.com wss://pusher.com https://coco-cdn-dev.s3.us-west-2.amazonaws.com https://rs.fullstory.com https://edge.fullstory.com https://events.launchdarkly.com:443 https://coco-production.us.auth0.com https://events.mapbox.com https://integrations.delivery.cocodelivery.com:443 https://device.delivery.cocodelivery.com https://state.delivery.cocodelivery.com https://api2.amplitude.com https://integrations.api.eu.cocodelivery.com https://app.launchdarkly.com https://operations.delivery.cocodelivery.com:443 https://config-grpc.delivery.cocodelivery.com https://deliveries.delivery.cocodelivery.com https://maps.delivery.cocodelivery.com https://api.mapbox.com https://dispatch-engine.delivery.cocodelivery.com; frame-src https://*.us.auth0.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; report-uri https://browser-intake-datadoghq.com/api/v2/logs?dd-api-key=pub0d4275e3776b136febb1845b48f3aebc&dd-evp-origin=content-security-policy&ddsource=csp-report&ddtags=service:mission-control%%2Cenv:${namespace}; report-to csp-endpoint"
++    ContentSecurityPolicyReportOnly: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://cdn.segment.com https://edge.fullstory.com https://stats.pusher.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.mapbox.com; font-src 'self' https://fonts.gstatic.com https://edge.fullstory.com https://r2cdn.perplexity.ai data:; img-src 'self' data: blob: https://googleapis.com https://cdn.delivery.cocodelivery.com https://coco-cdn-dev.s3.us-west-2.amazonaws.com https://gravatar.com https://cdn.auth0.com; media-src 'self' https://cdn.delivery.cocodelivery.com; worker-src blob:; connect-src 'self' blob: https://datadoghq.com https://rum.browser-intake-datadoghq.com https://logs.browser-intake-datadoghq.com https://browser-intake-datadoghq.com https://*.datadoghq.com https://launchdarkly.com https://clientstream.launchdarkly.com https://*.cocodelivery.com https://mapbox.com *.pusher.com https://sentry.io https://gstatic.com https://auth0.com https://amplitude.com https://cdn.segment.com https://api.segment.io https://maps.googleapis.com wss://*.pusher.com https://coco-cdn-dev.s3.us-west-2.amazonaws.com https://rs.fullstory.com https://edge.fullstory.com https://events.launchdarkly.com:443 https://coco-production.us.auth0.com https://events.mapbox.com https://integrations.delivery.cocodelivery.com:443 https://device.delivery.cocodelivery.com https://state.delivery.cocodelivery.com https://api2.amplitude.com https://integrations.api.eu.cocodelivery.com https://app.launchdarkly.com https://operations.delivery.cocodelivery.com:443 https://config-grpc.delivery.cocodelivery.com https://deliveries.delivery.cocodelivery.com https://maps.delivery.cocodelivery.com https://api.mapbox.com https://dispatch-engine.delivery.cocodelivery.com; frame-src https://*.us.auth0.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; report-uri https://browser-intake-datadoghq.com/api/v2/logs?dd-api-key=pub0d4275e3776b136febb1845b48f3aebc&dd-evp-origin=content-security-policy&ddsource=csp-report&ddtags=service:mission-control%%2Cenv:${namespace}; report-to csp-endpoint"
+     StrictTransportSecurity: "max-age=31536000; includeSubDomains; preload"
+\ No newline at end of file
+diff --git a/infra/configs/mission-control/values.yaml.tpl b/infra/configs/mission-control/values.yaml.tpl
+index e695852f64..f69bab5727 100644
+--- a/infra/configs/mission-control/values.yaml.tpl
++++ b/infra/configs/mission-control/values.yaml.tpl
+@@ -17,5 +17,5 @@ headers:
+     StrictTransportSecurity: "max-age=31536000; includeSubDomains; preload"
+   prod:
+     ReportingEndpoints: csp-endpoint="https://browser-intake-datadoghq.com/api/v2/logs?dd-api-key=pub0d4275e3776b136febb1845b48f3aebc&dd-evp-origin=content-security-policy&ddsource=csp-report&ddtags=service:mission-control%%2Cenv:${namespace}"
+-    ContentSecurityPolicyReportOnly: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://cdn.segment.com https://edge.fullstory.com https://stats.pusher.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.mapbox.com; font-src 'self' https://fonts.gstatic.com https://edge.fullstory.com https://r2cdn.perplexity.ai data:; img-src 'self' data: blob: https://googleapis.com https://cdn.delivery.cocodelivery.com https://coco-cdn-dev.s3.us-west-2.amazonaws.com https://gravatar.com https://cdn.auth0.com; media-src 'self' https://cdn.delivery.cocodelivery.com; worker-src blob:; connect-src 'self' blob: https://datadoghq.com https://rum.browser-intake-datadoghq.com https://logs.browser-intake-datadoghq.com https://browser-intake-datadoghq.com https://*.datadoghq.com https://launchdarkly.com https://clientstream.launchdarkly.com https://*.cocodelivery.com https://mapbox.com *.pusher.com https://sentry.io https://gstatic.com https://auth0.com https://amplitude.com https://cdn.segment.com https://api.segment.io https://maps.googleapis.com wss://pusher.com https://coco-cdn-dev.s3.us-west-2.amazonaws.com https://rs.fullstory.com https://edge.fullstory.com https://events.launchdarkly.com:443 https://coco-production.us.auth0.com https://events.mapbox.com https://integrations.delivery.cocodelivery.com:443 https://device.delivery.cocodelivery.com https://state.delivery.cocodelivery.com https://api2.amplitude.com https://integrations.api.eu.cocodelivery.com https://app.launchdarkly.com https://operations.delivery.cocodelivery.com:443 https://config-grpc.delivery.cocodelivery.com https://deliveries.delivery.cocodelivery.com https://maps.delivery.cocodelivery.com https://api.mapbox.com https://dispatch-engine.delivery.cocodelivery.com; frame-src https://*.us.auth0.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; report-uri https://browser-intake-datadoghq.com/api/v2/logs?dd-api-key=pub0d4275e3776b136febb1845b48f3aebc&dd-evp-origin=content-security-policy&ddsource=csp-report&ddtags=service:mission-control%%2Cenv:${namespace}; report-to csp-endpoint"
++    ContentSecurityPolicyReportOnly: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://cdn.segment.com https://edge.fullstory.com https://stats.pusher.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.mapbox.com; font-src 'self' https://fonts.gstatic.com https://edge.fullstory.com https://r2cdn.perplexity.ai data:; img-src 'self' data: blob: https://googleapis.com https://cdn.delivery.cocodelivery.com https://coco-cdn-dev.s3.us-west-2.amazonaws.com https://gravatar.com https://cdn.auth0.com; media-src 'self' https://cdn.delivery.cocodelivery.com; worker-src blob:; connect-src 'self' blob: https://datadoghq.com https://rum.browser-intake-datadoghq.com https://logs.browser-intake-datadoghq.com https://browser-intake-datadoghq.com https://*.datadoghq.com https://launchdarkly.com https://clientstream.launchdarkly.com https://*.cocodelivery.com https://mapbox.com *.pusher.com https://sentry.io https://gstatic.com https://auth0.com https://amplitude.com https://cdn.segment.com https://api.segment.io https://maps.googleapis.com wss://*.pusher.com https://coco-cdn-dev.s3.us-west-2.amazonaws.com https://rs.fullstory.com https://edge.fullstory.com https://events.launchdarkly.com:443 https://coco-production.us.auth0.com https://events.mapbox.com https://integrations.delivery.cocodelivery.com:443 https://device.delivery.cocodelivery.com https://state.delivery.cocodelivery.com https://api2.amplitude.com https://integrations.api.eu.cocodelivery.com https://app.launchdarkly.com https://operations.delivery.cocodelivery.com:443 https://config-grpc.delivery.cocodelivery.com https://deliveries.delivery.cocodelivery.com https://maps.delivery.cocodelivery.com https://api.mapbox.com https://dispatch-engine.delivery.cocodelivery.com; frame-src https://*.us.auth0.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; report-uri https://browser-intake-datadoghq.com/api/v2/logs?dd-api-key=pub0d4275e3776b136febb1845b48f3aebc&dd-evp-origin=content-security-policy&ddsource=csp-report&ddtags=service:mission-control%%2Cenv:${namespace}; report-to csp-endpoint"
+     StrictTransportSecurity: "max-age=31536000; includeSubDomains; preload"
+diff --git a/lib/common/src/device/device-snapshot.ts b/lib/common/src/device/device-snapshot.ts
+deleted file mode 100644
+index bb9cc85b5a..0000000000
+--- a/lib/common/src/device/device-snapshot.ts
++++ /dev/null
+@@ -1,15 +0,0 @@
+-import { BatterySnapshot, Location } from '../heartbeat/typings';
+-
+-export type WithUpdatedAt<T> = T & {
+-  updatedAt: number;
+-};
+-
+-// This should be defined in protobuf.
+-export interface DeviceSnapshot {
+-  version: 1;
+-  serial: string;
+-  receivedAt: number;
+-  location: WithUpdatedAt<Location>;
+-  batteries: WithUpdatedAt<BatterySnapshot>[];
+-  healthStatus: WithUpdatedAt<{ healthy: boolean }>;
+-}
+diff --git a/lib/common/src/device/index.ts b/lib/common/src/device/index.ts
+deleted file mode 100644
+index 9a36eb36e7..0000000000
+--- a/lib/common/src/device/index.ts
++++ /dev/null
+@@ -1 +0,0 @@
+-export type { DeviceSnapshot, WithUpdatedAt } from './device-snapshot';
+diff --git a/lib/common/src/exchanges/names.ts b/lib/common/src/exchanges/names.ts
+index 83f9cebd0a..a77d964a6e 100644
+--- a/lib/common/src/exchanges/names.ts
++++ b/lib/common/src/exchanges/names.ts
+@@ -64,7 +64,6 @@ export enum Operations {
+   FoTaskAssignmentAccepted = 'operations/fo-task-assignment-accepted',
+   FoTaskAssignmentRejected = 'operations/fo-task-assignment-rejected',
+   FoTaskAssignmentAbandoned = 'operations/fo-task-assignment-abandoned',
+-  DeviceOperationalStateChanged = 'operations/device-operational-state-changed',
+ 
+   // RabbitMqRPC
+   RobotQuoteRequested = 'operations/quote-requested',
+@@ -88,7 +87,6 @@ export enum Devices {
+   CommandSentAsync = 'devices/command-sent-async',
+   CommandSucceed = 'devices/command-succeed',
+   CommandFailed = 'devices/command-failed',
+-  StateUpdated = 'device/state-updated',
+   DeviceProvisioned = 'devices/provisioned',
+   DevicePipelineProvisioned = 'devices/pipeline-provisioned',
+   DeviceMessageProcessing = 'devices/message-processing',
+diff --git a/lib/common/src/exchanges/operations/device-operational-state-changed.ts b/lib/common/src/exchanges/operations/device-operational-state-changed.ts
+deleted file mode 100644
+index 38ef9f52b0..0000000000
+--- a/lib/common/src/exchanges/operations/device-operational-state-changed.ts
++++ /dev/null
+@@ -1,11 +0,0 @@
+-import { RobotStateEventState } from '@coco/types/operations';
+-
+-export interface DeviceOperationalStateChangedPayload {
+-  serial: string;
+-  operationState?: RobotStateEventState;
+-  needsMovement?: boolean;
+-  needsMaintenance?: boolean;
+-  needsPickup?: boolean;
+-  undergoingMaintenance?: boolean;
+-  hasFood?: boolean;
+-}
+diff --git a/lib/common/src/exchanges/operations/index.ts b/lib/common/src/exchanges/operations/index.ts
+index d2caaa98ad..4dde5e1f13 100644
+--- a/lib/common/src/exchanges/operations/index.ts
++++ b/lib/common/src/exchanges/operations/index.ts
+@@ -1,4 +1,3 @@
+ export * from './fo-assistance-requested';
+ export * from './fo-tasks';
+-export * from './device-operational-state-changed';
+ export * from './partner-config-event';
+diff --git a/lib/common/src/exchanges/payload.types.ts b/lib/common/src/exchanges/payload.types.ts
+index b8d13a518b..2aee20dc67 100644
+--- a/lib/common/src/exchanges/payload.types.ts
++++ b/lib/common/src/exchanges/payload.types.ts
+@@ -36,7 +36,6 @@ import { PilotExperienceLevel, RouteIssue, TripType } from '@coco/types/operatio
+ import { Route } from '@coco/types/trips';
+ 
+ import {
+-  DeviceOperationalStateChangedPayload,
+   FoAssistanceRequestedPayload,
+   FoSubTaskCompletedPayload,
+   FoTaskAssignmentAbandonedPayload,
+@@ -52,7 +51,6 @@ import {
+ import { FoTaskActivatedPayload } from './operations/fo-tasks/activated';
+ import { ConnectivityOverallChanged, ConnectivityRawStatusChanged } from './types/rmq-body';
+ import { SlackChannels } from '../alerting';
+-import { DeviceSnapshot } from '../device';
+ import { HeartbeatV1 } from '../heartbeat';
+ import {
+   FoHubAssignmentState,
+@@ -255,7 +253,6 @@ export type Operations = {
+     tripId: string;
+     updatedRouteIssues: RouteIssue[];
+   };
+-  [Names.Operations.DeviceOperationalStateChanged]: DeviceOperationalStateChangedPayload;
+   [Names.Operations.TripRescueRequired]: {
+     tripId: string;
+     attemptCancellationReason: AttemptCancellationReason;
+@@ -334,7 +331,6 @@ export type Devices = {
+     timestamp: number;
+     error: string;
+   };
+-  [Names.Devices.StateUpdated]: DeviceSnapshot;
+   [Names.Devices.DeviceProvisioned]: {
+     serial: string;
+     timestamp: number;
+diff --git a/lib/common/src/exchanges/routing-keys.builders.ts b/lib/common/src/exchanges/routing-keys.builders.ts
+index e65363a1bb..cb2892fde7 100644
+--- a/lib/common/src/exchanges/routing-keys.builders.ts
++++ b/lib/common/src/exchanges/routing-keys.builders.ts
+@@ -84,7 +84,6 @@ export const operations: RoutingKeyFactoriesFactory<Operations, OperationsRoutin
+   [Operations.RobotQuoteRequested]: () => ``,
+   [Operations.RobotTripScheduled]: () => ``,
+   [Operations.CityEndedDailyOperations]: () => ``,
+-  [Operations.DeviceOperationalStateChanged]: () => ``,
+   [Operations.FoAssistanceRequested]: FoAssistanceRequestedRKBuilder,
+   [Operations.PartnerConfigEvent]: ({ type }) => `${type}`,
+   [Operations.FoTaskCreated]: ({ type = '*' }) => `${type}`,
+@@ -119,7 +118,6 @@ export const devices: RoutingKeyFactoriesFactory<Devices, DevicesRoutingKeyFacto
+   [Devices.CommandSentAsync]: ({ command }) => `${command}`,
+   [Devices.CommandSucceed]: ({ command }) => `${command}`,
+   [Devices.CommandFailed]: ({ command }) => `${command}`,
+-  [Devices.StateUpdated]: ({ serial }) => `${serial}`,
+   [Devices.DeviceProvisioned]: ({ serial }) => `${serial}`,
+   [Devices.DevicePipelineProvisioned]: ({ serial }) => `${serial}`,
+   [Devices.DeviceMessageProcessing]: ({ serial, type }) => `${serial}.${type}`,
+diff --git a/lib/common/src/exchanges/routing-keys.types.ts b/lib/common/src/exchanges/routing-keys.types.ts
+index b6d26570d5..1b0f65311a 100644
+--- a/lib/common/src/exchanges/routing-keys.types.ts
++++ b/lib/common/src/exchanges/routing-keys.types.ts
+@@ -94,7 +94,6 @@ export type OperationsRoutingKeyFactoryPayload = {
+   [Operations.RobotQuoteRequested]: null;
+   [Operations.RobotTripScheduled]: null;
+   [Operations.CityEndedDailyOperations]: null;
+-  [Operations.DeviceOperationalStateChanged]: null;
+   [Operations.FoAssistanceRequested]: FoAssistanceRequestedRKParams;
+   [Operations.PartnerConfigEvent]: { type: PartnerConfigEvent };
+   [Operations.FoTaskCreated]: { type: FoTaskType };
+@@ -128,7 +127,6 @@ export type DevicesRoutingKeyFactoryPayload = {
+   [Devices.CommandSentAsync]: DevicePayloadType[Devices.CommandSentAsync];
+   [Devices.CommandSucceed]: DevicePayloadType[Devices.CommandSucceed];
+   [Devices.CommandFailed]: DevicePayloadType[Devices.CommandFailed];
+-  [Devices.StateUpdated]: DevicePayloadType[Devices.StateUpdated];
+   [Devices.DeviceProvisioned]: DevicePayloadType[Devices.DeviceProvisioned];
+   [Devices.DevicePipelineProvisioned]: DevicePayloadType[Devices.DevicePipelineProvisioned];
+   [Devices.DeviceMessageProcessing]: DevicePayloadType[Devices.DeviceMessageProcessing];
+diff --git a/lib/common/src/index.ts b/lib/common/src/index.ts
+index 8ee4912938..df95dd4038 100644
+--- a/lib/common/src/index.ts
++++ b/lib/common/src/index.ts
+@@ -5,8 +5,6 @@ export * from './clients';
+ export * from './configuration';
+ export * as RobotConnectivity from './connectivity';
+ export * from './consts';
+-export * from './device';
+-export * from './device/device-snapshot';
+ export * as DI from './di';
+ export * as DriveU from './drive-u';
+ export * from './errors';
+diff --git a/lib/merchant-client/merchant-client.module.ts b/lib/merchant-client/merchant-client.module.ts
+index ad989e0ee6..c359f357da 100644
+--- a/lib/merchant-client/merchant-client.module.ts
++++ b/lib/merchant-client/merchant-client.module.ts
+@@ -23,6 +23,7 @@ export class MerchantClientModule {
+               const options = await asyncOptions.useFactory(...args);
+               const isLocalhost = options.url.includes('localhost') || options.url.includes('127.0.0.1');
+ 
++              // TODO: use common options
+               return {
+                 transport: Transport.GRPC,
+                 options: {
+@@ -42,7 +43,7 @@ export class MerchantClientModule {
+                     keepCase: false,
+                     longs: String,
+                     enums: Number,
+-                    defaults: false,
++                    defaults: true,
+                     oneofs: true,
+                     arrays: true,
+                     includeDirs: [PROTO_BASE, PROTO_GOOGLE_BASE],
+diff --git a/lib/types/deliveries/watchdog.ts b/lib/types/deliveries/watchdog.ts
+index f04176683c..3f81fe15f7 100644
+--- a/lib/types/deliveries/watchdog.ts
++++ b/lib/types/deliveries/watchdog.ts
+@@ -34,7 +34,7 @@ export enum ConditionLabel {
+   None = 'NONE',
+ }
+ 
+-export type TimeParameters = { timeBuffer: number };
++export type TimeParameters = { timeBuffer: number; configKey?: string };
+ export type SourceParameters = { source: Source };
+ export type ConditionParameters = Record<string, never> | TimeParameters | SourceParameters;
+ 
+@@ -62,15 +62,24 @@ export type NoneAction = { type: 'NONE' } & BaseAction;
+ 
+ export type ReportIssueAction = { type: 'REPORT_ISSUE'; deliveryId: string } & ReportIssueParameters & BaseAction;
+ 
++export type Condition = (
++  delivery: Delivery,
++  eta: Date,
++  estPickupTime: Date,
++  config: Record<string, unknown> | null,
++) => boolean;
++
+ export type Action = ChangeProviderAction | CancelDeliveryAction | NoneAction | ReportIssueAction;
+ 
+ export type FlowchartNode = {
+-  condition: (delivery: Delivery, eta: Date, estPickupTime: Date) => boolean;
++  condition: Condition;
+   trueBranch: Flowchart | null;
+   falseBranch: Flowchart | null;
+ };
+ 
+-export type FlowchartLeaf = { action: (delivery: Delivery, eta: Date) => Action | null };
++export type FlowchartLeaf = {
++  action: (delivery: Delivery, eta: Date) => Action | null;
++};
+ 
+ export type Flowchart = FlowchartNode | FlowchartLeaf;
+ 
+@@ -103,7 +112,10 @@ const FlowchartNodeSchema = z.discriminatedUnion('condition', [
+   }),
+   baseNode.extend({
+     condition: z.literal(ConditionLabel.HasTimeElapsedSinceQuotedPickup),
+-    conditionParameters: z.object({ timeBuffer: z.number() }),
++    conditionParameters: z.object({
++      timeBuffer: z.number().optional(),
++      configKey: z.string().optional(), // TODO (Rafa): Change this to be the enum of watchdog config keys
++    }),
+   }),
+   baseNode.extend({
+     condition: z.literal(ConditionLabel.IsDeliverySource),
+@@ -111,7 +123,10 @@ const FlowchartNodeSchema = z.discriminatedUnion('condition', [
+   }),
+   baseNode.extend({
+     condition: z.literal(ConditionLabel.IsPastLatestPickupTime),
+-    conditionParameters: z.object({ timeBuffer: z.number() }),
++    conditionParameters: z.object({
++      timeBuffer: z.number().optional(),
++      configKey: z.string().optional(), // TODO (Rafa): Change this to be the enum of watchdog config keys
++    }),
+   }),
+   baseNode.extend({
+     condition: z.literal(ConditionLabel.IsPastLoadedTime),
+@@ -153,7 +168,7 @@ export const FlowchartSchemaZ = z.record(z.union([FlowchartNodeSchema, Flowchart
+ export type FlowchartSchema = z.infer<typeof FlowchartSchemaZ>;
+ 
+ export type ConditionMap = {
+-  [key: string]: (params: ConditionParameters) => (delivery: Delivery, eta: Date, estPickupTime: Date) => boolean;
++  [key: string]: (params: ConditionParameters) => Condition;
+ };
+ 
+ export type ActionMap = {
+diff --git a/service/deliveries/.env.integration b/service/deliveries/.env.integration
+index 2a114afdab..e0a6a61fe1 100644
+--- a/service/deliveries/.env.integration
++++ b/service/deliveries/.env.integration
+@@ -163,3 +163,5 @@ STATE_BASE_URL=https://state.delivery-stage.cocodelivery.com
+ STATE_API_KEY=TODO_REPLACE_ME_WITH_VALUE
+ 
+ CONFIG_SERVICE_BASE_URL=http://config-http.delivery-stage.cocodelivery.com
++CONFIG_SERVICE_GRPC_URL=http://config.delivery-stage.cocodelivery.com
++CONFIG_SERVICE_API_KEY_READ_ONLY_LIST='dev-config-api-key'
+diff --git a/service/deliveries/src/modules/watchdog/service/conditions.ts b/service/deliveries/src/modules/watchdog/service/conditions.ts
+index 03c8a167e3..2841a2f3d4 100644
+--- a/service/deliveries/src/modules/watchdog/service/conditions.ts
++++ b/service/deliveries/src/modules/watchdog/service/conditions.ts
+@@ -80,11 +80,13 @@ export const WATCHDOG_CONDITION_MAP: ConditionMap = {
+     };
+   },
+   [ConditionLabel.HasTimeElapsedSinceQuotedPickup]: (params: TimeParameters) => {
+-    const qualityBufferMinutes = params.timeBuffer;
+-    return (delivery, _eta, _estPickupTime) => {
++    const configKey = params.configKey;
++    return (delivery, _eta, _estPickupTime, config) => {
+       if (delivery.attempt?.quotedPickupTime == null) {
+         return false;
+       }
++      const validConfigKey = configKey && config && config[configKey] != null;
++      const qualityBufferMinutes = validConfigKey ? config[configKey] : params.timeBuffer;
+       return new Date() > addMinutes(new Date(delivery.attempt.quotedPickupTime), qualityBufferMinutes);
+     };
+   },
+@@ -96,8 +98,11 @@ export const WATCHDOG_CONDITION_MAP: ConditionMap = {
+   },
+ 
+   [ConditionLabel.IsPastLatestPickupTime]: (params: TimeParameters) => {
+-    const qualityBufferMinutes = params.timeBuffer;
+-    return (delivery, _eta, _estPickupTime) => {
++    const configKey = params.configKey;
++    return (delivery, _eta, _estPickupTime, config) => {
++      // TODO: deprecate timeBuffer and only use config value
++      const validConfigKey = configKey && config && config[configKey] != null;
++      const qualityBufferMinutes = validConfigKey ? config[configKey] : params.timeBuffer;
+       return latestPickupTime(delivery, qualityBufferMinutes);
+     };
+   },
+diff --git a/service/deliveries/src/modules/watchdog/service/watchdog.service.ts b/service/deliveries/src/modules/watchdog/service/watchdog.service.ts
+index a9ea2ea70e..52f8dedd15 100644
+--- a/service/deliveries/src/modules/watchdog/service/watchdog.service.ts
++++ b/service/deliveries/src/modules/watchdog/service/watchdog.service.ts
+@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
+ import { addMinutes, isBefore } from 'date-fns';
+ import { tracer } from 'dd-trace';
+ 
++import { WatchdogConfig } from '@coco/coco-cjs-gen/coco/config/types/merchant/v1/merchant_pb';
+ import { FeatureFlagsService, ILogger, RedisClient } from '@coco/common';
++import { MerchantClientService } from '@coco/merchant-client';
+ import { JsonObject } from '@coco/types/base';
+ import {
+   ActionType,
+@@ -39,6 +41,7 @@ export class DeliveryWatchdogService {
+     private readonly repo: DeliveryWatchdogRepo,
+     private readonly flags: FeatureFlagsService,
+     private readonly redis: RedisClient,
++    private readonly merchantClient: MerchantClientService,
+   ) {
+     this.logger.setContext(this.constructor.name);
+   }
+@@ -107,7 +110,20 @@ export class DeliveryWatchdogService {
+     entry: string,
+   ): Promise<Action | null> {
+     const flowchart = await this.buildFlowchartFromSchema(schema, this.actions, this.conditions, entry);
+-    return DeliveryWatchdogService.getActionForDelivery(delivery, eta, estPickupTime, flowchart);
++    const configResult = await this.merchantClient.getWatchdogConfig(delivery.merchantId, delivery.source);
++    // TODO: make this mandatory once we validate config and remove timeBuffer
++    let config: WatchdogConfig.AsObject | null = null;
++    if (configResult instanceof Error) {
++      this.logger.error({
++        message: 'failed to get watchdog config',
++        error: configResult,
++        merchantId: delivery.merchantId,
++        source: delivery.source,
++      });
++    } else {
++      config = configResult;
++    }
++    return DeliveryWatchdogService.getActionForDelivery(delivery, eta, estPickupTime, flowchart, config);
+   }
+ 
+   private getDefaultActionForType(
+@@ -275,7 +291,20 @@ export class DeliveryWatchdogService {
+     try {
+       const flowchart = await this.buildFlowchartFromSchema(flow.schema, this.actions, this.conditions, flow.entry, '');
+ 
+-      const action = DeliveryWatchdogService.getActionForDelivery(delivery, eta, estPickupTime, flowchart);
++      const configResult = await this.merchantClient.getWatchdogConfig(delivery.merchantId, delivery.source);
++      // TODO: make this mandatory once we validate config and remove timeBuffer
++      let config: WatchdogConfig.AsObject | null = null;
++      if (configResult instanceof Error) {
++        this.logger.error({
++          message: 'failed to get watchdog config',
++          error: configResult,
++          merchantId: delivery.merchantId,
++          source: delivery.source,
++        });
++      } else {
++        config = configResult;
++      }
++      const action = DeliveryWatchdogService.getActionForDelivery(delivery, eta, estPickupTime, flowchart, config);
+       this.logger.debug({
+         message: 'Watchdog action',
+         action,
+@@ -499,6 +528,7 @@ export class DeliveryWatchdogService {
+     eta: Date,
+     estPickupTime: Date,
+     flowchart: Flowchart | null,
++    config: WatchdogConfig.AsObject | null,
+   ): Action | null => {
+     if (!flowchart) {
+       return null;
+@@ -506,10 +536,10 @@ export class DeliveryWatchdogService {
+     if ('action' in flowchart) {
+       return flowchart.action(delivery, eta);
+     }
+-    if (flowchart.condition(delivery, eta, estPickupTime)) {
+-      return DeliveryWatchdogService.getActionForDelivery(delivery, eta, estPickupTime, flowchart.trueBranch);
++    if (flowchart.condition(delivery, eta, estPickupTime, config)) {
++      return DeliveryWatchdogService.getActionForDelivery(delivery, eta, estPickupTime, flowchart.trueBranch, config);
+     } else {
+-      return DeliveryWatchdogService.getActionForDelivery(delivery, eta, estPickupTime, flowchart.falseBranch);
++      return DeliveryWatchdogService.getActionForDelivery(delivery, eta, estPickupTime, flowchart.falseBranch, config);
+     }
+   };
+ 
+diff --git a/service/dispatch-engine/.env.integration b/service/dispatch-engine/.env.integration
+index 4a8e8e5fab..efb85795d6 100644
+--- a/service/dispatch-engine/.env.integration
++++ b/service/dispatch-engine/.env.integration
+@@ -89,3 +89,5 @@ OPERATIONS_API_KEY="dev-operations-api-key"
+ REDSHIFT_CLIENT_OPTIONS="{}"
+ S3_SNAPSHOT_BUCKET=s3://coco-dispatch-snapshot-prod
+ CONFIG_SERVICE_BASE_URL=https://config-http.delivery-stage.cocodelivery.com
++CONFIG_SERVICE_GRPC_URL=http://config.delivery-stage.cocodelivery.com
++CONFIG_SERVICE_API_KEY_READ_ONLY_LIST='dev-config-api-key'
+diff --git a/service/integrations/.env.integration b/service/integrations/.env.integration
+index 0e54766869..632467103d 100644
+--- a/service/integrations/.env.integration
++++ b/service/integrations/.env.integration
+@@ -41,6 +41,8 @@ FLEET_BEACON_URL=http://localhost:1278/fleet
+ GOOGLE_ADDRESS_BASE_URL=http://localhost:1278/addressvalidation
+ MAPS_BASE_URL=http://localhost:1278/maps
+ CONFIG_SERVICE_BASE_URL=http://localhost:1278/config
++CONFIG_SERVICE_GRPC_URL=http://config.delivery-stage.cocodelivery.com
++CONFIG_SERVICE_API_KEY_READ_ONLY_LIST='dev-config-api-key'
+ PII_FIELDS=
+ USE_DOORDASH_V2=false
+ DOORDASH_UPDATE_KEY=fake_key
+diff --git a/web/mc/package.json b/web/mc/package.json
+index 602c9a0f85..068c790aad 100644
+--- a/web/mc/package.json
++++ b/web/mc/package.json
+@@ -16,7 +16,7 @@
+     "@analytics/segment": "^2.1.0",
+     "@auth0/auth0-react": "^2.3.0",
+     "@bufbuild/protobuf": "^1.10.0",
+-    "@coco/coco-ts-gen": "https://github.com/cocorobotics/coco-ts-gen.git#v0.0.90",
++    "@coco/coco-ts-gen": "https://github.com/cocorobotics/coco-ts-gen.git#v0.0.99",
+     "@coco/ui": "workspace:^",
+     "@coco/ui-web": "workspace:^",
+     "@connectrpc/connect": "^1.4.0",
+diff --git a/web/mc/src/components/IntegrationContent.tsx b/web/mc/src/components/IntegrationContent.tsx
+index f2d180727d..7919223331 100644
+--- a/web/mc/src/components/IntegrationContent.tsx
++++ b/web/mc/src/components/IntegrationContent.tsx
+@@ -4,8 +4,19 @@ import { IntegrationSchema, integrationSchema } from 'lib';
+ import { useCallback, useEffect, useMemo, useState } from 'react';
+ import { useForm } from 'react-hook-form';
+ import { useDeepCompareMemo } from 'use-deep-compare';
+-import { formatErrorMessage, getChangedFields, humanizeIntegrationType } from 'utils';
++import {
++  canHaveWatchdogConfigOverrides,
++  formatErrorMessage,
++  getChangedFields,
++  humanizeIntegrationType,
++  toNullableIntUpdate,
++  transformNullableIntField,
++} from 'utils';
+ 
++import {
++  UpdateIntegrationRequest,
++  UpdateWatchdogConfigOverridesInput,
++} from '@coco/coco-ts-gen/coco/config/merchant/service/v1/merchant_pb';
+ import { Integration, IntegrationType } from '@coco/coco-ts-gen/coco/config/types/merchant/v1/merchant_pb';
+ import { NullableIntUpdate } from '@coco/coco-ts-gen/coco/config/types/shared/v1/nullable_int_update_pb';
+ import { Source } from '@coco/types/deliveries';
+@@ -52,6 +63,7 @@ export const IntegrationContent = ({ merchantId, integrationType, source, mode,
+   const { mutateAsync: update, isPending: isPendingUpdate } = useUpdateIntegration({
+     onSuccess: () => {
+       toast.success('Successfully updated integration');
++      refetch();
+       onSuccess?.();
+     },
+   });
+@@ -66,7 +78,14 @@ export const IntegrationContent = ({ merchantId, integrationType, source, mode,
+   // Default values must be a plain object, not a proto class
+   const defaultValues = useDeepCompareMemo(() => {
+     if (mode === FormMode.create) {
+-      return { merchantId, isActive: false, isDeviceless: false, pickupOverrideMin: 0, latestPickupByBufferMin: 0 };
++      return {
++        merchantId,
++        isActive: false,
++        isDeviceless: false,
++        pickupOverrideMin: 0,
++        unlockPin: undefined,
++        watchdogConfigOverrides: undefined,
++      };
+     }
+ 
+     if (mode === FormMode.view || mode === FormMode.edit) {
+@@ -130,48 +149,98 @@ export const IntegrationContent = ({ merchantId, integrationType, source, mode,
+     [form]
+   );
+ 
++  // Helper to transform watchdog config overrides from input type to output type
++  const transformWatchdogConfigOverrides = useCallback(
++    (overrides?: { loadDelayAllowedMin?: number | '' | null; arrivalDelayAllowedMin?: number | '' | null }) => {
++      if (!overrides) return undefined;
++      return {
++        loadDelayAllowedMin: transformNullableIntField(overrides.loadDelayAllowedMin),
++        arrivalDelayAllowedMin: transformNullableIntField(overrides.arrivalDelayAllowedMin),
++      };
++    },
++    []
++  );
++
+   // Handle when the form is submitted in edit mode
+   const handleUpdate = useCallback(
+     async (data: IntegrationSchema) => {
+       if (!defaultValues) return;
+ 
+-      const integration = new Integration(data);
++      // Transform the data to match the output type before creating Integration
++      const transformedData = {
++        ...data,
++        watchdogConfigOverrides: transformWatchdogConfigOverrides(data.watchdogConfigOverrides),
++      };
++
++      const integration = new Integration(transformedData);
+       const changedFields = getChangedFields(integration, new Integration(defaultValues), true);
+ 
+       const { unlockPin, ...otherChangedFields } = changedFields;
+ 
+       // Map the unlock pin value to NullableIntUpdate type
+-      const updatedUnlockPin =
+-        'unlockPin' in changedFields
+-          ? typeof unlockPin === 'number'
+-            ? new NullableIntUpdate({ clearValue: false, intValue: unlockPin })
+-            : new NullableIntUpdate({ clearValue: true })
+-          : undefined;
+-
+-      await update({
++      const updatedUnlockPin = 'unlockPin' in changedFields ? toNullableIntUpdate(unlockPin) : undefined;
++
++      // Transform watchdogConfigOverrides using getChangedFields, then convert to NullableIntUpdate
++      const formValues = form.getValues();
++      const originalWatchdogConfigOverrides =
++        defaultValues && 'watchdogConfigOverrides' in defaultValues ? defaultValues.watchdogConfigOverrides : undefined;
++
++      // Use getChangedFields to detect what changed
++      const watchdogConfigOverrideChanges =
++        formValues.watchdogConfigOverrides && originalWatchdogConfigOverrides
++          ? getChangedFields(formValues.watchdogConfigOverrides, originalWatchdogConfigOverrides, false)
++          : formValues.watchdogConfigOverrides || {};
++
++      // Map the watchdog config overrides to the UpdateWatchdogConfigOverridesInput type
++      let updateWatchdogConfigOverrides: UpdateWatchdogConfigOverridesInput | undefined;
++      if (watchdogConfigOverrideChanges && Object.keys(watchdogConfigOverrideChanges).length > 0) {
++        const result: { loadDelayAllowedMin?: NullableIntUpdate; arrivalDelayAllowedMin?: NullableIntUpdate } = {};
++
++        if ('loadDelayAllowedMin' in watchdogConfigOverrideChanges) {
++          result.loadDelayAllowedMin = toNullableIntUpdate(watchdogConfigOverrideChanges.loadDelayAllowedMin);
++        }
++
++        if ('arrivalDelayAllowedMin' in watchdogConfigOverrideChanges) {
++          result.arrivalDelayAllowedMin = toNullableIntUpdate(watchdogConfigOverrideChanges.arrivalDelayAllowedMin);
++        }
++
++        if (Object.keys(result).length > 0) {
++          updateWatchdogConfigOverrides = new UpdateWatchdogConfigOverridesInput(result);
++        }
++      }
++
++      // Construct the UpdateIntegrationRequest with all fields
++      const updateRequest = new UpdateIntegrationRequest({
+         merchantId: integration.merchantId,
+         source: integration.source,
+         integrationType: integration.type,
+         ...(updatedUnlockPin && { unlockPin: updatedUnlockPin }),
++        ...(updateWatchdogConfigOverrides && { updateWatchdogConfigOverrides }),
+         ...otherChangedFields,
+-      }).catch((error) => {
++      });
++
++      await update(updateRequest).catch((error) => {
+         setFormError(['Error updating integration.', ...formatErrorMessage(error.message).flat()]);
+       });
+     },
+-    [defaultValues, update]
++    [defaultValues, update, form, transformWatchdogConfigOverrides]
+   );
+ 
+   // Handle when the form is submitted in create mode
+   const handleCreate = useCallback(
+     async (data: IntegrationSchema) => {
+       const { type, ...otherFields } = data;
+-      const payload = { ...otherFields, integrationType: type };
++      const payload = {
++        ...otherFields,
++        integrationType: type,
++        watchdogConfigOverrides: transformWatchdogConfigOverrides(otherFields.watchdogConfigOverrides),
++      };
+ 
+       await create(payload).catch((error) => {
+         setFormError(['Error creating integration.', ...formatErrorMessage(error.message).flat()]);
+       });
+     },
+-    [create]
++    [create, transformWatchdogConfigOverrides]
+   );
+ 
+   // Additional behavior when the form is reset
+@@ -183,7 +252,16 @@ export const IntegrationContent = ({ merchantId, integrationType, source, mode,
+   // Reset the form when the default values change
+   useEffect(() => {
+     if (!defaultValues) return;
+-    form.reset(defaultValues);
++    const resetValues = {
++      ...defaultValues,
++      watchdogConfigOverrides: defaultValues.watchdogConfigOverrides
++        ? {
++            loadDelayAllowedMin: defaultValues.watchdogConfigOverrides.loadDelayAllowedMin ?? null,
++            arrivalDelayAllowedMin: defaultValues.watchdogConfigOverrides.arrivalDelayAllowedMin ?? null,
++          }
++        : { loadDelayAllowedMin: null, arrivalDelayAllowedMin: null },
++    };
++    form.reset(resetValues);
+     onReset();
+   }, [form, defaultValues, onReset]);
+ 
+@@ -291,27 +369,45 @@ export const IntegrationContent = ({ merchantId, integrationType, source, mode,
+           )}
+ 
+           {integrationSource !== Source.uber_eats_marketplace && (
+-            <>
+-              <FormInputField
+-                name="pickupOverrideMin"
+-                label="Pickup Override (min)"
+-                type="number"
+-                mode={mode}
+-                control={form.control}
+-                min={0}
+-                step={1}
+-              />
+-
+-              <FormInputField
+-                name="latestPickupByBufferMin"
+-                label="Latest Pickup By Buffer (min)"
+-                type="number"
+-                mode={mode}
+-                control={form.control}
+-                min={0}
+-                step={1}
+-              />
+-            </>
++            <FormInputField
++              name="pickupOverrideMin"
++              label="Pickup Override (min)"
++              type="number"
++              mode={mode}
++              control={form.control}
++              min={0}
++              step={1}
++            />
++          )}
++
++          {canHaveWatchdogConfigOverrides(integrationSource) && (
++            <div className="space-y-2 col-span-2">
++              <p className="text-base font-medium text-muted-foreground all-small-caps">Watchdog Config Overrides</p>
++
++              <div className="grid grid-cols-2 gap-4 items-start">
++                <FormInputField
++                  name="watchdogConfigOverrides.loadDelayAllowedMin"
++                  label="Load Delay Allowed (min)"
++                  type="number"
++                  mode={mode}
++                  control={form.control}
++                  min={0}
++                  step={1}
++                  placeholder="(Use default)"
++                />
++
++                <FormInputField
++                  name="watchdogConfigOverrides.arrivalDelayAllowedMin"
++                  label="Arrival Delay Allowed (min)"
++                  type="number"
++                  mode={mode}
++                  control={form.control}
++                  min={0}
++                  step={1}
++                  placeholder="(Use default)"
++                />
++              </div>
++            </div>
+           )}
+ 
+           <FormInputArrayField
+diff --git a/web/mc/src/components/IntegrationsTable/IntegrationsTable.tsx b/web/mc/src/components/IntegrationsTable/IntegrationsTable.tsx
+index 8d12de5fef..285872a839 100644
+--- a/web/mc/src/components/IntegrationsTable/IntegrationsTable.tsx
++++ b/web/mc/src/components/IntegrationsTable/IntegrationsTable.tsx
+@@ -1,7 +1,7 @@
+ import { getCoreRowModel } from '@tanstack/react-table';
+ import { HistoryTimeline, IntegrationContent } from 'components';
+ import { useIntegrationHistory, useIntegrations } from 'hooks';
+-import { useState } from 'react';
++import { useEffect, useState } from 'react';
+ import { humanizeIntegrationType } from 'utils';
+ 
+ import { Integration } from '@coco/coco-ts-gen/coco/config/types/merchant/v1/merchant_pb';
+@@ -35,12 +35,20 @@ export const IntegrationsTable = ({ showTitle, merchantIds, queryParams }: Props
+   const [activeSheet, setActiveSheet] = useState<string | undefined>(undefined);
+   const [activeEditTab, setActiveEditTab] = useState<string>('edit');
+   const [selectedIntegration, setSelectedIntegration] = useState<Integration | undefined>(undefined);
++  const [initializedSorting, setInitializedSorting] = useState(false);
+ 
+   const defaultQueryParams = useQueryParams({ pageSize: TABLE_PAGE_SIZES.large, updateUrl: false });
+ 
+   const { isReady, pagination, columnFilters, setColumnFilters, sorting, setSorting } =
+     queryParams ?? defaultQueryParams;
+ 
++  // Initialize sorting to source ascending
++  useEffect(() => {
++    if (!isReady || initializedSorting) return;
++    setSorting([{ id: 'source', desc: false }]);
++    setInitializedSorting(true);
++  }, [isReady, initializedSorting, setSorting]);
++
+   const { data, isLoading, isError, refetch, dataUpdatedAt } = useIntegrations({
+     merchantIds,
+     page: pagination.pageIndex,
+diff --git a/web/mc/src/components/IntegrationsTable/columns.tsx b/web/mc/src/components/IntegrationsTable/columns.tsx
+index 1d10f49cc3..14b43d1d0f 100644
+--- a/web/mc/src/components/IntegrationsTable/columns.tsx
++++ b/web/mc/src/components/IntegrationsTable/columns.tsx
+@@ -1,5 +1,10 @@
+ import { ColumnDef } from '@tanstack/react-table';
+-import { getOrderSourceIcon, humanizeIntegrationType } from 'utils';
++import {
++  canHaveWatchdogConfigOverrides,
++  getOptionalFieldValue,
++  getOrderSourceIcon,
++  humanizeIntegrationType,
++} from 'utils';
+ 
+ import { Integration } from '@coco/coco-ts-gen/coco/config/types/merchant/v1/merchant_pb';
+ import { Source } from '@coco/types/deliveries';
+@@ -99,14 +104,45 @@ export const getIntegrationsTableColumns = ({ onClickEdit, onClickHistory }: Par
+     },
+   },
+   {
+-    header: 'Latest Pickup By Buffer',
+-    id: 'latestPickupByBufferMin',
++    header: 'Load Delay Allowed',
++    id: 'loadDelayAllowedMin',
+     enableColumnFilter: false,
+-    size: 210,
+-    accessorFn: (row) => (row.source === Source.uber_eats_marketplace ? undefined : row.latestPickupByBufferMin),
++    enableSorting: false,
++    size: 200,
++    accessorFn: (row) => {
++      if (!canHaveWatchdogConfigOverrides(row.source)) return undefined;
++      return getOptionalFieldValue(
++        row.watchdogConfigOverrides,
++        'loadDelayAllowedMin',
++        (v): v is number => typeof v === 'number'
++      );
++    },
++    cell: (info) => {
++      const loadDelayAllowedMin = info.getValue<number | undefined>();
++      if (!canHaveWatchdogConfigOverrides(info.row.original.source)) return '';
++      if (loadDelayAllowedMin === undefined) return <span className="text-muted-foreground">Default</span>;
++      return `${loadDelayAllowedMin} min`;
++    },
++  },
++  {
++    header: 'Arrival Delay Allowed',
++    id: 'arrivalDelayAllowedMin',
++    enableColumnFilter: false,
++    enableSorting: false,
++    size: 200,
++    accessorFn: (row) => {
++      if (!canHaveWatchdogConfigOverrides(row.source)) return undefined;
++      return getOptionalFieldValue(
++        row.watchdogConfigOverrides,
++        'arrivalDelayAllowedMin',
++        (v): v is number => typeof v === 'number'
++      );
++    },
+     cell: (info) => {
+-      const latestPickupByBufferMin = info.getValue<Integration['latestPickupByBufferMin']>();
+-      return latestPickupByBufferMin !== undefined && `${latestPickupByBufferMin} min`;
++      if (!canHaveWatchdogConfigOverrides(info.row.original.source)) return '';
++      const arrivalDelayAllowedMin = info.getValue<number | undefined>();
++      if (arrivalDelayAllowedMin === undefined) return <span className="text-muted-foreground">Default</span>;
++      return `${arrivalDelayAllowedMin} min`;
+     },
+   },
+   {
+diff --git a/web/mc/src/components/MerchantContent.tsx b/web/mc/src/components/MerchantContent.tsx
+index 37339df4b7..ac8c8ab723 100644
+--- a/web/mc/src/components/MerchantContent.tsx
++++ b/web/mc/src/components/MerchantContent.tsx
+@@ -6,6 +6,7 @@ import {
+   useUpdateMerchant,
+   useValidateCreateMerchant,
+   useValidateUpdateMerchant,
++  useWatchdogConfigs,
+ } from 'hooks';
+ import { MerchantSchema, merchantSchema } from 'lib';
+ import { useCallback, useEffect, useMemo, useState } from 'react';
+@@ -14,7 +15,7 @@ import { useDeepCompareMemo } from 'use-deep-compare';
+ import { formatErrorMessage, getChangedFields } from 'utils';
+ 
+ import { RobotLocationType } from '@coco/coco-ts-gen/coco/config/types/fleet/v1/fleet_pb';
+-import { DayEnum, Merchant } from '@coco/coco-ts-gen/coco/config/types/merchant/v1/merchant_pb';
++import { DayEnum, Merchant, WatchdogConfig } from '@coco/coco-ts-gen/coco/config/types/merchant/v1/merchant_pb';
+ import {
+   Error,
+   Form,
+@@ -25,6 +26,7 @@ import {
+   FormInputArrayField,
+   FormInputField,
+   FormSwitchField,
++  Label,
+   Loader,
+   PhoneInput,
+   toast,
+@@ -65,6 +67,15 @@ export const MerchantContent = ({ id, mode, onCancel, onSuccess, onLoad }: Props
+     robotLocationTypes: [RobotLocationType.PARKING_LOT],
+   });
+ 
++  const {
++    data: watchdogConfigsData,
++    isLoading: isLoadingWatchdogConfigs,
++    isError: isErrorWatchdogConfigs,
++  } = useWatchdogConfigs({
++    merchantId: id,
++    enabled: !!id && mode === FormMode.view,
++  });
++
+   const {
+     data: updateData,
+     mutateAsync: update,
+@@ -202,6 +213,81 @@ export const MerchantContent = ({ id, mode, onCancel, onSuccess, onLoad }: Props
+     else if (isError) onLoad?.(undefined);
+   }, [data, isError, onLoad]);
+ 
++  const renderWatchdogConfig = (watchdogConfig: WatchdogConfig | undefined, label: string) => {
++    if (!watchdogConfig) return null;
++
++    const loadDelayAllowedMin = watchdogConfig.loadDelayAllowedMin;
++    const arrivalDelayAllowedMin = watchdogConfig.arrivalDelayAllowedMin;
++
++    if (loadDelayAllowedMin === undefined && arrivalDelayAllowedMin === undefined) return null;
++
++    return (
++      <div className="space-y-1">
++        <p className="text-sm font-medium">{label}</p>
++        <div className="space-y-1 text-sm">
++          {loadDelayAllowedMin !== undefined && <p>Load Delay Allowed: {loadDelayAllowedMin} min</p>}
++          {arrivalDelayAllowedMin !== undefined && <p>Arrival Delay Allowed: {arrivalDelayAllowedMin} min</p>}
++        </div>
++      </div>
++    );
++  };
++
++  const renderWatchdogConfigs = () => {
++    if (isLoadingWatchdogConfigs) {
++      return (
++        <div className="space-y-2">
++          <Label htmlFor="watchdog-configs">Watchdog Configs</Label>
++          <Loader className="w-fit" id="watchdog-configs" />
++        </div>
++      );
++    }
++
++    if (isErrorWatchdogConfigs) {
++      return (
++        <div className="space-y-2">
++          <Label htmlFor="watchdog-configs">Watchdog Configs</Label>
++          <p className="text-sm text-destructive">Failed to load watchdog configs</p>
++        </div>
++      );
++    }
++
++    if (!watchdogConfigsData) {
++      return (
++        <div className="space-y-2">
++          <Label htmlFor="watchdog-configs">Watchdog Configs</Label>
++          <p className="text-sm text-muted-foreground" id="watchdog-configs">
++            No value
++          </p>
++        </div>
++      );
++    }
++
++    const uberEatsWatchdogConfig = renderWatchdogConfig(
++      watchdogConfigsData.uber_eats_marketplace.data?.watchdogConfig,
++      'Uber Eats'
++    );
++    const doorDashWatchdogConfig = renderWatchdogConfig(
++      watchdogConfigsData.door_dash_marketplace.data?.watchdogConfig,
++      'DoorDash'
++    );
++
++    return (
++      <div className="space-y-2">
++        <Label htmlFor="watchdog-configs">Watchdog Configs</Label>
++        {!uberEatsWatchdogConfig && !doorDashWatchdogConfig ? (
++          <p className="text-sm text-muted-foreground" id="watchdog-configs">
++            No value
++          </p>
++        ) : (
++          <div className="grid grid-cols-2 gap-4" id="watchdog-configs">
++            {uberEatsWatchdogConfig}
++            {doorDashWatchdogConfig}
++          </div>
++        )}
++      </div>
++    );
++  };
++
+   if (isLoading || isLoadingParkingLots) return <Loader className="h-full w-full" />;
+ 
+   if (isError || isErrorParkingLots) {
+@@ -308,6 +394,10 @@ export const MerchantContent = ({ id, mode, onCancel, onSuccess, onLoad }: Props
+         </form>
+       </Form>
+ 
++      {mode === FormMode.view &&
++        (isLoadingWatchdogConfigs || isErrorWatchdogConfigs || watchdogConfigsData) &&
++        renderWatchdogConfigs()}
++
+       {mode === FormMode.view && (
+         <div className="flex flex-col md:flex-row gap-y-1 gap-x-2 text-xs text-muted-foreground ml-auto text-right">
+           {lastUpdatedText && <p>{lastUpdatedText}</p>}
+diff --git a/web/mc/src/components/shared/HistoryTimeline.tsx b/web/mc/src/components/shared/HistoryTimeline.tsx
+index 44f29b7260..53157ce7a7 100644
+--- a/web/mc/src/components/shared/HistoryTimeline.tsx
++++ b/web/mc/src/components/shared/HistoryTimeline.tsx
+@@ -2,6 +2,7 @@ import { UseQueryResult } from '@tanstack/react-query';
+ import { formatDistanceToNow } from 'date-fns';
+ import { capitalize } from 'lodash';
+ import { useMemo } from 'react';
++import { isNullableIntUpdateHistory } from 'utils';
+ 
+ import { History } from '@coco/coco-ts-gen/coco/config/types/shared/v1/history_pb';
+ import { Timeline, TimelineItem } from '@coco/ui/components';
+@@ -48,21 +49,65 @@ export const HistoryTimeline = <TParams,>({
+         }
+ 
+         if (item.diffs) {
++          const formatValue = (val: unknown, indent = 0) => {
++            if (isNullableIntUpdateHistory(val)) {
++              if (val.Cleared) return <span className="text-muted-foreground">Cleared</span>;
++              return <span>{String(val.Value)}</span>;
++            }
++
++            if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
++              return (
++                <div className="ml-4">
++                  {Object.entries(val).map(([key, propValue]) => (
++                    <div key={key}>
++                      <span className="font-medium">{key}: </span>
++                      {formatValue(propValue, indent + 1)}
++                    </div>
++                  ))}
++                </div>
++              );
++            }
++
++            if (Array.isArray(val)) {
++              return (
++                <div className="ml-4">
++                  {val.map((item, index) => (
++                    <div key={index} className="mb-1">
++                      <span className="font-mono">[{index}] </span> {formatValue(item, indent + 1)}
++                    </div>
++                  ))}
++                </div>
++              );
++            }
++
++            return <span>{String(val)}</span>;
++          };
++
+           description.push(
+-            item.diffs.map((diff) => (
+-              <div className="text-foreground mb-1" key={`${diff.field}-${diff.value}`}>
+-                <span className="font-medium">{`${diff.field}: `}</span>
+-                <span>{diff.value.isWellFormed() ? diff.value : JSON.parse(diff.value)}</span>
+-              </div>
+-            ))
++            item.diffs.map((diff) => {
++              let value: unknown;
++              const stringValue = String(diff.value);
++
++              try {
++                value = JSON.parse(stringValue);
++              } catch {
++                value = diff.value.isWellFormed() ? diff.value : stringValue;
++              }
++
++              const isObject = value !== null && typeof value === 'object' && !Array.isArray(value);
++              const isArray = Array.isArray(value);
++
++              return (
++                <div className="text-foreground mb-1" key={`${diff.field}-${diff.value}`}>
++                  <span className="font-medium">{`${diff.field}: `}</span>
++                  {isObject || isArray ? formatValue(value) : <span>{String(value)}</span>}
++                </div>
++              );
++            })
+           );
+         }
+ 
+-        return {
+-          prefix,
+-          description,
+-          variant: 'secondary',
+-        };
++        return { prefix, description, variant: 'secondary' };
+       });
+   }, [data, entityKey, hiddenFields]);
+ 
+diff --git a/web/mc/src/hooks/mutations/useUpdateIntegration.ts b/web/mc/src/hooks/mutations/useUpdateIntegration.ts
+index c69e2a487e..8a55a44d13 100644
+--- a/web/mc/src/hooks/mutations/useUpdateIntegration.ts
++++ b/web/mc/src/hooks/mutations/useUpdateIntegration.ts
+@@ -46,6 +46,11 @@ export function useUpdateIntegration(
+             ),
+           };
+           queryClient.invalidateQueries(historyQueryKey);
++
++          const watchdogConfigQueryKey = {
++            queryKey: merchantsQueryKeys.watchdogConfig(variables.merchantId, variables.source),
++          };
++          queryClient.invalidateQueries(watchdogConfigQueryKey);
+         }
+       }
+ 
+diff --git a/web/mc/src/hooks/mutations/useUpdateIntegrations.ts b/web/mc/src/hooks/mutations/useUpdateIntegrations.ts
+index 42a335f15a..4a437ba128 100644
+--- a/web/mc/src/hooks/mutations/useUpdateIntegrations.ts
++++ b/web/mc/src/hooks/mutations/useUpdateIntegrations.ts
+@@ -47,6 +47,11 @@ export function useUpdateIntegrations(
+               ),
+             };
+             queryClient.invalidateQueries(historyQueryKey);
++
++            const watchdogConfigQueryKey = {
++              queryKey: merchantsQueryKeys.watchdogConfig(integration.merchantId, integration.source),
++            };
++            queryClient.invalidateQueries(watchdogConfigQueryKey);
+           }
+         }
+       }
+diff --git a/web/mc/src/hooks/queries/index.ts b/web/mc/src/hooks/queries/index.ts
+index dd65c4f310..b61e64a326 100644
+--- a/web/mc/src/hooks/queries/index.ts
++++ b/web/mc/src/hooks/queries/index.ts
+@@ -16,3 +16,5 @@ export * from './useRobotLocationHistory';
+ export * from './useRobotLocations';
+ export * from './useTrip';
+ export * from './useTrips';
++export * from './useWatchdogConfig';
++export * from './useWatchdogConfigs';
+diff --git a/web/mc/src/hooks/queries/useWatchdogConfig.ts b/web/mc/src/hooks/queries/useWatchdogConfig.ts
+new file mode 100644
+index 0000000000..bdb70ef846
+--- /dev/null
++++ b/web/mc/src/hooks/queries/useWatchdogConfig.ts
+@@ -0,0 +1,26 @@
++import { useQuery } from '@connectrpc/connect-query';
++import { keepPreviousData } from '@tanstack/react-query';
++import { useAppContext } from 'components';
++
++import { getWatchdogConfig } from '@coco/coco-ts-gen/coco/config/merchant/service/v1/merchant-MerchantService_connectquery';
++
++type Params = {
++  merchantId?: string;
++  source?: string;
++  enabled?: boolean;
++};
++
++export function useWatchdogConfig({ merchantId, source, enabled = true }: Params) {
++  const { configTransport } = useAppContext();
++
++  return useQuery(
++    getWatchdogConfig,
++    { merchantId, source },
++    {
++      transport: configTransport,
++      placeholderData: keepPreviousData,
++      enabled: enabled && !!merchantId && !!source,
++      retry: false,
++    }
++  );
++}
+diff --git a/web/mc/src/hooks/queries/useWatchdogConfigs.ts b/web/mc/src/hooks/queries/useWatchdogConfigs.ts
+new file mode 100644
+index 0000000000..53ce8d16f0
+--- /dev/null
++++ b/web/mc/src/hooks/queries/useWatchdogConfigs.ts
+@@ -0,0 +1,25 @@
++import { Code, ConnectError } from '@connectrpc/connect';
++import { useWatchdogConfig } from 'hooks';
++
++import { Source } from '@coco/types/deliveries';
++
++type UseWatchdogConfigsParams = {
++  merchantId?: string;
++  enabled?: boolean;
++};
++
++export function useWatchdogConfigs({ merchantId, enabled = true }: UseWatchdogConfigsParams) {
++  const queries = {
++    uber_eats_marketplace: useWatchdogConfig({ merchantId, source: Source.uber_eats_marketplace, enabled }),
++    door_dash_marketplace: useWatchdogConfig({ merchantId, source: Source.door_dash_marketplace, enabled }),
++  };
++
++  const values = Object.values(queries);
++
++  const isLoading = values.some((q) => q.isLoading);
++  const isFetching = values.some((q) => q.isFetching);
++  const isError = values.some((q) => q.isError && (!q.error || (q.error as ConnectError)?.code !== Code.NotFound));
++  const error = values.find((q) => q.error)?.error;
++
++  return { data: queries, isLoading, isFetching, isError, error };
++}
+diff --git a/web/mc/src/lib/query-keys/merchants.ts b/web/mc/src/lib/query-keys/merchants.ts
+index c405440a7c..9d83e8eb6a 100644
+--- a/web/mc/src/lib/query-keys/merchants.ts
++++ b/web/mc/src/lib/query-keys/merchants.ts
+@@ -12,6 +12,7 @@ import {
+   getIntegrationHistory,
+   getMerchant,
+   getMerchantHistory,
++  getWatchdogConfig,
+ } from '@coco/coco-ts-gen/coco/config/merchant/service/v1/merchant-MerchantService_connectquery';
+ 
+ export const merchantsQueryKeys = {
+@@ -29,4 +30,6 @@ export const merchantsQueryKeys = {
+     integrationType: GetIntegrationHistoryRequest['integrationType'],
+     source: GetIntegrationHistoryRequest['source']
+   ) => createConnectQueryKey(getIntegrationHistory, { merchantId, integrationType, source }),
++  watchdogConfig: (merchantId: string, source: string) =>
++    createConnectQueryKey(getWatchdogConfig, { merchantId, source }),
+ };
+diff --git a/web/mc/src/lib/schemas.ts b/web/mc/src/lib/schemas.ts
+index a986c466a1..5ea08962cc 100644
+--- a/web/mc/src/lib/schemas.ts
++++ b/web/mc/src/lib/schemas.ts
+@@ -49,6 +49,10 @@ export const merchantSchema = z.object({
+ 
+ export type MerchantSchema = z.infer<typeof merchantSchema>;
+ 
++const optionalNumberSchema = z
++  .union([z.number().int().min(0), z.literal(''), z.null(), z.undefined()])
++  .transform((val): number | undefined => (val === '' || val === null ? undefined : val));
++
+ export const integrationSchema = z.object({
+   merchantId: z.string(),
+   type: z.nativeEnum(IntegrationType),
+@@ -57,11 +61,16 @@ export const integrationSchema = z.object({
+   isActive: z.boolean(),
+   pickupOverrideMin: z.number().int().min(0),
+   unlockPin: z.number().int().min(0).max(9999).optional(),
+-  latestPickupByBufferMin: z.number().int().min(0),
+   isDeviceless: z.boolean().optional(),
++  watchdogConfigOverrides: z
++    .object({
++      loadDelayAllowedMin: optionalNumberSchema.optional(),
++      arrivalDelayAllowedMin: optionalNumberSchema.optional(),
++    })
++    .optional(),
+ });
+ 
+-export type IntegrationSchema = z.infer<typeof integrationSchema>;
++export type IntegrationSchema = z.input<typeof integrationSchema>;
+ 
+ export const bulkUploadSchema = z.object({
+   file: typeof window === 'undefined' ? z.any() : z.instanceof(FileList, { message: 'Required' }),
+diff --git a/web/mc/src/utils/data.ts b/web/mc/src/utils/data.ts
+index 729f518bb5..ff5aa3ef23 100644
+--- a/web/mc/src/utils/data.ts
++++ b/web/mc/src/utils/data.ts
+@@ -19,3 +19,40 @@ export function createQueryKeyMatchPredicate<T = unknown>(baseQueryKey: unknown[
+     return true;
+   };
+ }
++
++/** Safely extract a field value from an optional object (protobuf or plain object) */
++export function getOptionalFieldValue<T>(
++  obj: unknown,
++  key: string,
++  typeGuard?: (value: unknown) => value is T
++): T | undefined {
++  if (!obj) return undefined;
++  let value: unknown;
++  // Handle protobuf instance with toJson method
++  if (typeof obj === 'object' && 'toJson' in obj && typeof obj.toJson === 'function') {
++    const json = obj.toJson();
++    if (json && typeof json === 'object' && !Array.isArray(json) && key in json) {
++      value = json[key];
++    }
++  }
++  // Handle plain object
++  else if (typeof obj === 'object' && obj !== null && key in obj) {
++    const record = obj as Record<string, unknown>;
++    value = record[key];
++  }
++  if (typeGuard) return typeGuard(value) ? value : undefined;
++
++  return value as T | undefined;
++}
++
++/** Check if an object an update using a NullableIntUpdate  */
++export const isNullableIntUpdateHistory = (obj: unknown): obj is { Value: unknown; Cleared: boolean } => {
++  return (
++    obj !== null &&
++    typeof obj === 'object' &&
++    !Array.isArray(obj) &&
++    'Value' in obj &&
++    'Cleared' in obj &&
++    typeof (obj as { Cleared: unknown }).Cleared === 'boolean'
++  );
++};
+diff --git a/web/mc/src/utils/merchant.ts b/web/mc/src/utils/merchant.ts
+index fa75183d19..fa31461716 100644
+--- a/web/mc/src/utils/merchant.ts
++++ b/web/mc/src/utils/merchant.ts
+@@ -1,5 +1,8 @@
+ import { capitalize } from 'lodash';
+ 
++import { NullableIntUpdate } from '@coco/coco-ts-gen/coco/config/types/shared/v1/nullable_int_update_pb';
++import { Source } from '@coco/types/deliveries';
++
+ // Format a gRPC error message into a list of error messages
+ export const formatErrorMessage = (message?: string): string[][] => {
+   if (!message) return [];
+@@ -153,3 +156,19 @@ export const trimRobotLocationName = (name?: string) => {
+   if (!name) return '';
+   return name.replace(/-?\s*(Parking Lot|Storage Location)/g, '').trim();
+ };
++
++export const canHaveWatchdogConfigOverrides = (integrationSource?: string) =>
++  integrationSource === Source.door_dash_marketplace || integrationSource === Source.uber_eats_marketplace;
++
++/** Transform a nullable int field from form input (number | '' | null) to output type (number | undefined) */
++export const transformNullableIntField = (value: number | '' | null | undefined): number | undefined => {
++  return value === '' || value === null ? undefined : value;
++};
++
++/** Convert an input value to a NullableIntUpdate object (number -> intValue, string/null/undefined -> clearValue) */
++export const toNullableIntUpdate = (value: number | string | null | undefined): NullableIntUpdate => {
++  const numValue = typeof value === 'number' ? value : undefined;
++  return numValue !== undefined && !isNaN(numValue)
++    ? new NullableIntUpdate({ clearValue: false, intValue: numValue })
++    : new NullableIntUpdate({ clearValue: true });
++};
+diff --git a/web/mc/tests/merchants.spec.ts b/web/mc/tests/merchants.spec.ts
+index 2ad1c63c49..c880a4044c 100644
+--- a/web/mc/tests/merchants.spec.ts
++++ b/web/mc/tests/merchants.spec.ts
+@@ -174,7 +174,6 @@ test.describe.serial('merchant detail', () => {
+       isActive: !originalValues.isActive,
+       isDeviceless: !originalValues.isDeviceless,
+       pickupOverrideMin: String((Number(originalValues.pickupOverrideMin) + 1) % 500),
+-      latestPickupByBufferMin: String((Number(originalValues.latestPickupByBufferMin) + 1) % 500),
+       addExternalMerchantIdValues: ['test-external-id-123'],
+     };
+ 
+@@ -182,6 +181,7 @@ test.describe.serial('merchant detail', () => {
+       ...updateToNewValues,
+       source: originalValues.source,
+       type: originalValues.type,
++      unlockPin: originalValues.unlockPin,
+       externalMerchantIds: (originalValues.externalMerchantIds ?? [])
+         .filter((_, i) => !(updateToNewValues.removeExternalMerchantIdIndices ?? []).includes(i))
+         .concat(updateToNewValues.addExternalMerchantIdValues ?? []),
+@@ -238,7 +238,6 @@ test.describe.serial('merchant detail', () => {
+       source: originalValues.source,
+       type: originalValues.type,
+       isDeviceless: false,
+-      latestPickupByBufferMin: '',
+       pickupOverrideMin: '',
+       externalMerchantIds: (originalValues.externalMerchantIds ?? [])
+         .filter((_, index) => !(updateToNewValues.removeExternalMerchantIdIndices ?? []).includes(index))
+@@ -252,7 +251,6 @@ test.describe.serial('merchant detail', () => {
+       ...originalValues,
+       isDeviceless: undefined,
+       pickupOverrideMin: undefined,
+-      latestPickupByBufferMin: undefined,
+       unlockPinEnabled: typeof originalValues.unlockPin === 'string',
+       removeExternalMerchantIdIndices: [(originalValues.externalMerchantIds ?? []).length],
+     };
+diff --git a/web/mc/tests/utils/integrations.ts b/web/mc/tests/utils/integrations.ts
+index 1c6c295f91..7c141189dc 100644
+--- a/web/mc/tests/utils/integrations.ts
++++ b/web/mc/tests/utils/integrations.ts
+@@ -1,6 +1,7 @@
+ import { expect, Locator, Page } from '@playwright/test';
+ 
+ import { Source } from '@coco/types/deliveries';
++import { TIME_INTERVALS } from '@coco/ui/lib';
+ 
+ import { Container, expectTopToast, findRowIndexByValues, getCellTextByHeader, getRowByIndex } from './components';
+ import {
+@@ -19,7 +20,6 @@ export type IntegrationUpdates = {
+   unlockPinEnabled?: boolean;
+   unlockPin?: string;
+   pickupOverrideMin?: string;
+-  latestPickupByBufferMin?: string;
+   addExternalMerchantIdValues?: string[]; // add in order
+   removeExternalMerchantIdIndices?: number[]; // remove by index
+ };
+@@ -31,7 +31,6 @@ type IntegrationValues = {
+   isDeviceless?: boolean;
+   unlockPin?: string;
+   pickupOverrideMin?: string;
+-  latestPickupByBufferMin?: string;
+   externalMerchantIds?: string[];
+ };
+ 
+@@ -42,7 +41,6 @@ async function editIntegrationValues({
+   unlockPinEnabled,
+   unlockPin,
+   pickupOverrideMin,
+-  latestPickupByBufferMin,
+   addExternalMerchantIdValues,
+   removeExternalMerchantIdIndices,
+ }: { container: Container } & IntegrationUpdates) {
+@@ -51,7 +49,6 @@ async function editIntegrationValues({
+   await setSwitchFieldValue(container, 'unlockPinEnabled', unlockPinEnabled);
+   await setInputFieldValue(container, 'unlockPin', unlockPin);
+   await setInputFieldValue(container, 'pickupOverrideMin', pickupOverrideMin);
+-  await setInputFieldValue(container, 'latestPickupByBufferMin', latestPickupByBufferMin);
+   await removeIndicesFromInputArrayField(container, 'externalMerchantIds', removeExternalMerchantIdIndices);
+   await addValuesToInputArrayField(container, 'externalMerchantIds', addExternalMerchantIdValues);
+ }
+@@ -63,7 +60,6 @@ export async function getIntegrationValuesFromForm(container: Container): Promis
+   const isDeviceless = await getSwitchFieldValue(container, 'isDeviceless');
+   const unlockPin = await getInputFieldValue(container, 'unlockPin');
+   const pickupOverrideMin = await getInputFieldValue(container, 'pickupOverrideMin');
+-  const latestPickupByBufferMin = await getInputFieldValue(container, 'latestPickupByBufferMin');
+   const externalMerchantIds = await getInputArrayFieldValue(container, 'externalMerchantIds');
+ 
+   return {
+@@ -73,7 +69,6 @@ export async function getIntegrationValuesFromForm(container: Container): Promis
+     isDeviceless,
+     unlockPin,
+     pickupOverrideMin,
+-    latestPickupByBufferMin,
+     externalMerchantIds,
+   };
+ }
+@@ -103,10 +98,6 @@ export async function getIntegrationsValuesFromTable(
+     .replace(/\s*min$/, '')
+     .trim();
+ 
+-  const latestPickupByBufferMin = (await getCellTextByHeader(table, rowIndex, 'Latest Pickup By Buffer'))
+-    .replace(/\s*min$/, '')
+-    .trim();
+-
+   const externalMerchantIds = (await getCellTextByHeader(table, rowIndex, 'External Merchant IDs')).split(/\s+/);
+ 
+   return {
+@@ -116,7 +107,6 @@ export async function getIntegrationsValuesFromTable(
+     isDeviceless,
+     unlockPin,
+     pickupOverrideMin,
+-    latestPickupByBufferMin,
+     externalMerchantIds,
+   };
+ }
+@@ -152,6 +142,9 @@ export async function editExpectIntegrationTable({
+   const sheet = page.getByTestId('integrations-table-sheet');
+   await expect(sheet).toBeVisible();
+ 
++  // Wait for form to be fully loaded - check for a form field to be visible
++  await expect(sheet.getByTestId('form-isActive')).toBeVisible();
++
+   // Find the submit button
+   const submitButton = sheet.getByRole('button', { name: /Submit/i });
+   await expect(submitButton).toBeVisible();
+@@ -166,6 +159,14 @@ export async function editExpectIntegrationTable({
+   // Find the success toast
+   await expectTopToast(page, 'Successfully updated');
+ 
++  // Refresh the page to ensure the table has the latest data
++  await page.waitForTimeout(TIME_INTERVALS['1 second']);
++  await page.reload({ waitUntil: 'domcontentloaded' });
++  await page.waitForTimeout(TIME_INTERVALS['1 second']);
++
++  // Wait for the table to be visible again after reload
++  await expect(table).toBeVisible();
++
+   // Expect the values in the card to have updated
+   const currentValues = await getIntegrationsValuesFromTable(table, source, type);
+   expect(currentValues).toEqual(expectedValues);
+diff --git a/web/mission-control/Dockerfile b/web/mission-control/Dockerfile
+index 25baabe535..77f21105ca 100644
+--- a/web/mission-control/Dockerfile
++++ b/web/mission-control/Dockerfile
+@@ -44,8 +44,9 @@ ARG NEXT_PUBLIC_INTEGRATIONS_EU_API_URL
+ ARG NEXT_PUBLIC_DELIVERIES_BASE_URL
+ ARG NEXT_PUBLIC_MAPS_API_URL
+ ARG NEXT_PUBLIC_AWS_ENV
++ARG GIT_ACCESS_TOKEN
+ 
+-RUN apk add --no-cache libc6-compat openssl
++RUN apk add --no-cache libc6-compat openssl git
+ RUN apk update
+ WORKDIR /app
+ 
+@@ -54,6 +55,10 @@ COPY --from=builder /app/out/json/ .
+ COPY --from=builder /app/out/yarn.lock ./yarn.lock
+ COPY --from=builder /app/.yarn ./.yarn
+ COPY --from=builder /app/.yarnrc.yml  ./.yarnrc.yml
++
++# Configure git to use the access token
++RUN git config --global --add url."https://${GIT_ACCESS_TOKEN}@github.com/".insteadOf "https://github.com/"
++
+ RUN yarn install
+ 
+ COPY --from=builder /app/out/full/ .
+diff --git a/web/mission-control/package.json b/web/mission-control/package.json
+index 452bb1e2ab..83297fec2f 100644
+--- a/web/mission-control/package.json
++++ b/web/mission-control/package.json
+@@ -14,6 +14,8 @@
+     "@amplitude/analytics-browser": "^1.1.2",
+     "@analytics/segment": "^1.1.4",
+     "@auth0/auth0-react": "^2.3.0",
++    "@bufbuild/protobuf": "^1.10.0",
++    "@coco/coco-ts-gen": "https://github.com/cocorobotics/coco-ts-gen.git#v0.0.99",
+     "@coco/ui": "workspace:^",
+     "@coco/ui-web": "workspace:^",
+     "@date-io/moment": "^2.13.1",
+diff --git a/web/mission-control/src/components/Watchdog/components/DynamicForm.tsx b/web/mission-control/src/components/Watchdog/components/DynamicForm.tsx
+index 496ca02936..d1896afc0d 100644
+--- a/web/mission-control/src/components/Watchdog/components/DynamicForm.tsx
++++ b/web/mission-control/src/components/Watchdog/components/DynamicForm.tsx
+@@ -1,4 +1,6 @@
+-import { Box, FormHelperText, TextField } from '@mui/material';
++import { Box, FormHelperText, MenuItem, Select, TextField } from '@mui/material';
++import { WatchdogConfig } from '@coco/coco-ts-gen/coco/config/types/merchant/v1/merchant_pb';
++import { camelToCapitalWords } from 'utils';
+ 
+ export const DynamicForm = ({
+   data,
+@@ -12,19 +14,40 @@ export const DynamicForm = ({
+   return (
+     <div style={{ overflowY: 'auto' }}>
+       {Object.entries(data).map(([key, value]) => (
+-        <div key={key}>
+-          <TextField
+-            multiline
+-            type={value}
+-            value={form[key]}
+-            onChange={(event) =>
+-              setForm((state) => ({
+-                ...state,
+-                [key]: value == 'number' ? parseFloat(event.target.value) : event.target.value,
+-              }))
+-            }
+-          />
+-          <FormHelperText>{key}</FormHelperText>
++        <div key={key} style={{ marginBottom: '16px' }}>
++          <Box sx={{ marginBottom: '16px' }}>
++            {key === 'configKey' ? (
++              <Select
++                displayEmpty
++                value={form[key] || ''}
++                onChange={(event) =>
++                  setForm((state: Record<string, string | number>) => ({
++                    ...state,
++                    [key]: event.target.value,
++                  }))
++                }
++              >
++                {Object.keys(new WatchdogConfig()).map((configKey) => (
++                  <MenuItem key={configKey} value={configKey}>
++                    {camelToCapitalWords(configKey)}
++                  </MenuItem>
++                ))}
++              </Select>
++            ) : (
++              <TextField
++                multiline
++                type={value}
++                value={form[key] ?? ''}
++                onChange={(event) =>
++                  setForm((state: Record<string, string | number>) => ({
++                    ...state,
++                    [key]: value == 'number' ? parseFloat(event.target.value) || 0 : event.target.value,
++                  }))
++                }
++              />
++            )}
++            <FormHelperText>{key}</FormHelperText>
++          </Box>
+         </div>
+       ))}
+     </div>
+diff --git a/web/mission-control/src/components/Watchdog/types/index.ts b/web/mission-control/src/components/Watchdog/types/index.ts
+index 65fedc7308..1c63ee7bb4 100644
+--- a/web/mission-control/src/components/Watchdog/types/index.ts
++++ b/web/mission-control/src/components/Watchdog/types/index.ts
+@@ -18,13 +18,13 @@ export const ConditionParameterTypeMap = {
+     timeBuffer: 'number',
+   },
+   [ConditionLabel.IsPastLatestPickupTime]: {
+-    timeBuffer: 'number',
++    configKey: 'string',
+   },
+   [ConditionLabel.HasTimeElapsedSinceCreation]: {
+     timeBuffer: 'number',
+   },
+   [ConditionLabel.HasTimeElapsedSinceQuotedPickup]: {
+-    timeBuffer: 'number',
++    configKey: 'string',
+   },
+   [ConditionLabel.IsPastLoadedTime]: {
+     timeBuffer: 'number',
+diff --git a/web/mission-control/src/utils/string.ts b/web/mission-control/src/utils/string.ts
+index de48746a96..52bc6b7b70 100644
+--- a/web/mission-control/src/utils/string.ts
++++ b/web/mission-control/src/utils/string.ts
+@@ -5,3 +5,10 @@ export const snakeToCapitalWords = (snake: string): string => {
+     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+     .join(' ');
+ };
++
++export const camelToCapitalWords = (camel: string): string => {
++  return camel
++    .replace(/([A-Z])/g, ' $1')
++    .replace(/^./, (str) => str.toUpperCase())
++    .trim();
++};
+diff --git a/yarn.lock b/yarn.lock
+index 80b8593711..9dcbabb5a5 100644
+--- a/yarn.lock
++++ b/yarn.lock
+@@ -4461,10 +4461,10 @@ __metadata:
+   languageName: node
+   linkType: hard
+ 
+-"@coco/coco-ts-gen@https://github.com/cocorobotics/coco-ts-gen.git#v0.0.90":
++"@coco/coco-ts-gen@https://github.com/cocorobotics/coco-ts-gen.git#v0.0.99":
+   version: 1.0.0
+-  resolution: "@coco/coco-ts-gen@https://github.com/cocorobotics/coco-ts-gen.git#commit=94afa297c76ce2ac77ca18810edc008b63c1dcc5"
+-  checksum: 10c0/255561207bc42368cb7e31eebe04565452b4a0f24a7f90ae0d220e41cedb96253fa1599e258956b47a5468287a23094d26072e8426c2e24216bab86bb73a9a4d
++  resolution: "@coco/coco-ts-gen@https://github.com/cocorobotics/coco-ts-gen.git#commit=951b31d573f76e88304c4a817addafa5cd66b019"
++  checksum: 10c0/4f29b92bf903e83034659df5994085a050a4f9f4ef3f1087d1f4bc41a00542d71c4634d675b5303a8b164e1ae4404ee16d9820c9377fb66c6272784a6211d542
+   languageName: node
+   linkType: hard
+ 
+@@ -4817,7 +4817,7 @@ __metadata:
+     "@analytics/segment": "npm:^2.1.0"
+     "@auth0/auth0-react": "npm:^2.3.0"
+     "@bufbuild/protobuf": "npm:^1.10.0"
+-    "@coco/coco-ts-gen": "https://github.com/cocorobotics/coco-ts-gen.git#v0.0.90"
++    "@coco/coco-ts-gen": "https://github.com/cocorobotics/coco-ts-gen.git#v0.0.99"
+     "@coco/eslint-config": "workspace:^"
+     "@coco/shared-config": "workspace:^"
+     "@coco/types": "workspace:^"
+@@ -5007,6 +5007,8 @@ __metadata:
+     "@amplitude/analytics-browser": "npm:^1.1.2"
+     "@analytics/segment": "npm:^1.1.4"
+     "@auth0/auth0-react": "npm:^2.3.0"
++    "@bufbuild/protobuf": "npm:^1.10.0"
++    "@coco/coco-ts-gen": "https://github.com/cocorobotics/coco-ts-gen.git#v0.0.99"
+     "@coco/types": "workspace:^"
+     "@coco/typescript-deps": "workspace:*"
+     "@coco/ui": "workspace:^"
