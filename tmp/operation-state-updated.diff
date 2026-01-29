@@ -1,0 +1,645 @@
+diff --git a/lib/common/src/exchanges/names.ts b/lib/common/src/exchanges/names.ts
+index a77d964a6e..3549a3375d 100644
+--- a/lib/common/src/exchanges/names.ts
++++ b/lib/common/src/exchanges/names.ts
+@@ -5,6 +5,8 @@ export enum Deliveries {
+   DeliveryNotificationFailed = 'deliveries/delivery-notification-failed',
+   ProviderEtaUpdated = 'deliveries/provider-eta-update',
+   RescueInitiated = 'deliveries/rescue-initiated',
++  RobotLoaded = 'deliveries/robot-loaded',
++  RobotUnloaded = 'deliveries/robot-unloaded',
+ 
+   // deprecated
+   DeliveryUpdated = 'deliveries/delivery-updated',
+@@ -64,6 +66,7 @@ export enum Operations {
+   FoTaskAssignmentAccepted = 'operations/fo-task-assignment-accepted',
+   FoTaskAssignmentRejected = 'operations/fo-task-assignment-rejected',
+   FoTaskAssignmentAbandoned = 'operations/fo-task-assignment-abandoned',
++  OperationStateUpdated = 'operations/operation-state-updated',
+ 
+   // RabbitMqRPC
+   RobotQuoteRequested = 'operations/quote-requested',
+diff --git a/lib/common/src/exchanges/payload.types.ts b/lib/common/src/exchanges/payload.types.ts
+index 2aee20dc67..0db8bfccd9 100644
+--- a/lib/common/src/exchanges/payload.types.ts
++++ b/lib/common/src/exchanges/payload.types.ts
+@@ -1,5 +1,8 @@
+ import { Names } from '.';
+ 
++import { RobotLoadedEvent } from '@coco/coco-cjs-gen/coco/dp/deliveries/v1alpha/events/robot_loaded_event_pb';
++import { RobotUnloadedEvent } from '@coco/coco-cjs-gen/coco/dp/deliveries/v1alpha/events/robot_unloaded_event_pb';
++import { OperationStateUpdatedEvent } from '@coco/coco-cjs-gen/coco/dp/operations/v1alpha/events/operation_state_updated_event_pb';
+ import {
+   PartnerLoadTimePayload,
+   TaskCreated,
+@@ -77,6 +80,14 @@ import {
+ } from '../robot-state/event';
+ import { FieldOpHeartbeat } from '../types';
+ 
++// Re-export proto-generated types for convenience
++export { OperationStateUpdatedEvent, RobotLoadedEvent, RobotUnloadedEvent };
++
++// Payload types using proto .AsObject for type inference
++export type RobotLoadedEventPayload = RobotLoadedEvent.AsObject;
++export type RobotUnloadedEventPayload = RobotUnloadedEvent.AsObject;
++export type OperationStateUpdatedEventPayload = OperationStateUpdatedEvent.AsObject;
++
+ export type DeliveryWithCartAndLocation = DeliveriesPrismaTypes.Delivery & {
+   partner: DeliveriesPrismaTypes.Partner;
+   locations: {
+@@ -193,6 +204,8 @@ export type Deliveries = {
+   };
+   [Names.Deliveries.CustomerSMSFailed]: TwilioSMSFailurePayload;
+   [Names.Deliveries.RescueInitiated];
++  [Names.Deliveries.RobotLoaded]: RobotLoadedEventPayload;
++  [Names.Deliveries.RobotUnloaded]: RobotUnloadedEventPayload;
+ };
+ 
+ export type DispatchEngine = {
+@@ -284,6 +297,7 @@ export type Operations = {
+   [Names.Operations.FoTaskAssignmentAccepted]: FoTaskAssignmentAcceptedPayload;
+   [Names.Operations.FoTaskAssignmentRejected]: FoTaskAssignmentRejectedPayload;
+   [Names.Operations.FoTaskAssignmentAbandoned]: FoTaskAssignmentAbandonedPayload;
++  [Names.Operations.OperationStateUpdated]: OperationStateUpdatedEventPayload;
+ };
+ 
+ export type Orders = {
+diff --git a/lib/common/src/exchanges/routing-keys.builders.ts b/lib/common/src/exchanges/routing-keys.builders.ts
+index cb2892fde7..88abd46bcd 100644
+--- a/lib/common/src/exchanges/routing-keys.builders.ts
++++ b/lib/common/src/exchanges/routing-keys.builders.ts
+@@ -47,6 +47,8 @@ export const deliveries: RoutingKeyFactoriesFactory<Deliveries, DeliveriesRoutin
+   [Deliveries.EtaRequested]: () => '',
+   [Deliveries.ProviderEtaUpdated]: () => '',
+   [Deliveries.RescueInitiated]: () => '',
++  [Deliveries.RobotLoaded]: () => '',
++  [Deliveries.RobotUnloaded]: () => '',
+ });
+ 
+ export const dispatchEngine: RoutingKeyFactoriesFactory<
+@@ -101,6 +103,7 @@ export const operations: RoutingKeyFactoriesFactory<Operations, OperationsRoutin
+   [Operations.FoTaskAssignmentAccepted]: () => '',
+   [Operations.FoTaskAssignmentRejected]: () => '',
+   [Operations.FoTaskAssignmentAbandoned]: () => '',
++  [Operations.OperationStateUpdated]: () => '',
+ });
+ 
+ export const orders: RoutingKeyFactoriesFactory<Orders, OrdersRoutingKeyFactoryPayload> = () => ({
+diff --git a/lib/common/src/exchanges/routing-keys.types.ts b/lib/common/src/exchanges/routing-keys.types.ts
+index 1b0f65311a..6b63685f38 100644
+--- a/lib/common/src/exchanges/routing-keys.types.ts
++++ b/lib/common/src/exchanges/routing-keys.types.ts
+@@ -60,6 +60,8 @@ export type DeliveriesRoutingKeyFactoryPayload = {
+   [Deliveries.EtaRequested]: null;
+   [Deliveries.ProviderEtaUpdated]: ProviderEtaUpdatedEvent;
+   [Deliveries.RescueInitiated]: null;
++  [Deliveries.RobotLoaded]: null;
++  [Deliveries.RobotUnloaded]: null;
+ };
+ 
+ export type DispatchEngineRoutingKeyFactoryPayload = {
+@@ -114,6 +116,7 @@ export type OperationsRoutingKeyFactoryPayload = {
+   [Operations.FoTaskAssignmentAccepted]: null;
+   [Operations.FoTaskAssignmentRejected]: null;
+   [Operations.FoTaskAssignmentAbandoned]: null;
++  [Operations.OperationStateUpdated]: null;
+ };
+ 
+ export type DevicesRoutingKeyFactoryPayload = {
+diff --git a/lib/common/src/robot-state/robot-state.ts b/lib/common/src/robot-state/robot-state.ts
+index 84b1d05b97..6e30390766 100644
+--- a/lib/common/src/robot-state/robot-state.ts
++++ b/lib/common/src/robot-state/robot-state.ts
+@@ -1,6 +1,46 @@
++import { OperationState as OperationStatePb } from '@coco/coco-cjs-gen/coco/dp/operations/v1alpha/operation_state_pb';
++import { RobotStateEventState } from '@coco/types/operations';
++
+ export enum RobotState {
+   OFF_DUTY = 'OFF_DUTY',
+   PARKED = 'PARKED',
+   ON_TRIP = 'ON_TRIP',
+   GROUNDED = 'GROUNDED',
+ }
++
++/**
++ * Maps RobotState (from state machine) to proto OperationState enum.
++ */
++export function mapRobotStateToProtoOperationState(state: RobotState): OperationStatePb {
++  switch (state) {
++    case RobotState.GROUNDED:
++      return OperationStatePb.OPERATION_STATE_GROUNDED;
++    case RobotState.OFF_DUTY:
++      return OperationStatePb.OPERATION_STATE_OFF_DUTY;
++    case RobotState.ON_TRIP:
++      return OperationStatePb.OPERATION_STATE_ON_TRIP;
++    case RobotState.PARKED:
++      return OperationStatePb.OPERATION_STATE_PARKED;
++  }
++}
++
++/**
++ * Maps RobotStateEventState (from events) to proto OperationState enum.
++ */
++export function mapRobotStateEventStateToProtoOperationState(
++  state: RobotStateEventState,
++): OperationStatePb {
++  switch (state) {
++    case RobotStateEventState.GROUNDED:
++      return OperationStatePb.OPERATION_STATE_GROUNDED;
++    case RobotStateEventState.OFF_DUTY:
++      return OperationStatePb.OPERATION_STATE_OFF_DUTY;
++    case RobotStateEventState.ON_TRIP:
++      return OperationStatePb.OPERATION_STATE_ON_TRIP;
++    case RobotStateEventState.PARKED:
++      return OperationStatePb.OPERATION_STATE_PARKED;
++    case RobotStateEventState.DEPLOYED:
++      // DEPLOYED maps to OFF_DUTY as the closest equivalent
++      return OperationStatePb.OPERATION_STATE_OFF_DUTY;
++  }
++}
+diff --git a/lib/types/operations/trips.ts b/lib/types/operations/trips.ts
+index fe62d284d1..0c1bd8fe52 100644
+--- a/lib/types/operations/trips.ts
++++ b/lib/types/operations/trips.ts
+@@ -255,7 +255,6 @@ export interface CreateTripInput {
+   } | null; // used as backup
+   botSerial: string | null;
+   expectedStartTime: Date;
+-  latestStart: Date | null; // TODO(sarah): make this required after pilot preemption is released
+   reason: string | null;
+ }
+ 
+diff --git a/service/deliveries/src/modules/delivery/service/delivery.service.ts b/service/deliveries/src/modules/delivery/service/delivery.service.ts
+index 20bbcec87f..a1e879a7d2 100644
+--- a/service/deliveries/src/modules/delivery/service/delivery.service.ts
++++ b/service/deliveries/src/modules/delivery/service/delivery.service.ts
+@@ -1383,6 +1383,9 @@ export class DeliveryService {
+             return new Error('robot provider missing bot serial, should never happen');
+           }
+ 
++          await this.publisher.publishRobotUnloaded({ deviceId: delivery.rescueAttempt.driverName });
++
++          // TODO(DP-3027): Remove this once all consumers have migrated to Operations.OperationStateUpdated
+           await this.publisher.publishRobotStateUpdated({
+             serial: delivery.rescueAttempt.driverName,
+             hasFood: false,
+diff --git a/service/deliveries/src/modules/providers/robot/robot.service.ts b/service/deliveries/src/modules/providers/robot/robot.service.ts
+index 928ac90106..615155e414 100644
+--- a/service/deliveries/src/modules/providers/robot/robot.service.ts
++++ b/service/deliveries/src/modules/providers/robot/robot.service.ts
+@@ -562,6 +562,9 @@ export class RobotProviderService implements IDeliveryProvider {
+       driverName: deviceId,
+     });
+ 
++    await this.publisher.publishRobotLoaded({ deviceId });
++
++    // TODO(DP-3027): Remove this once all consumers have migrated to Operations.OperationStateUpdated
+     await this.publisher.publishRobotStateUpdated({
+       serial: deviceId,
+       hasFood: true,
+diff --git a/service/deliveries/src/shared/amqp-publisher.service.ts b/service/deliveries/src/shared/amqp-publisher.service.ts
+index 94907f1ca6..735dd0c0a4 100644
+--- a/service/deliveries/src/shared/amqp-publisher.service.ts
++++ b/service/deliveries/src/shared/amqp-publisher.service.ts
+@@ -13,6 +13,8 @@ import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
+ import { Injectable } from '@nestjs/common';
+ 
+ import { Exchanges, ILogger } from '@coco/common';
++import { RobotLoadedEvent } from '@coco/coco-cjs-gen/coco/dp/deliveries/v1alpha/events/robot_loaded_event_pb';
++import { RobotUnloadedEvent } from '@coco/coco-cjs-gen/coco/dp/deliveries/v1alpha/events/robot_unloaded_event_pb';
+ import { AttemptStatus, Provider } from '@coco/types/deliveries';
+ 
+ const D = Exchanges.Names.Deliveries;
+@@ -78,6 +80,10 @@ export class AmqpPublisher {
+     return this.amqp.publish(Exchanges.prefixWithEnv(exchange), routingKey, payload);
+   }
+ 
++  /**
++   * @deprecated Use publishRobotLoaded instead. This will be removed once all
++   * consumers have migrated to Operations.OperationStateUpdated.
++   */
+   public async publishRobotStateUpdated(
+     payload: Exchanges.PayloadOf<Exchanges.Names.Robots.StateChange>,
+   ): Promise<void> {
+@@ -85,4 +91,42 @@ export class AmqpPublisher {
+     await this.amqp.publish(Exchanges.prefixWithEnv(Exchanges.Names.Robots.StateChange), '', payload);
+     this.logger.log({ message: 'publishRobotStateUpdated called, payload published', payload });
+   }
++
++  /**
++   * Publishes a RobotLoaded event when a robot is loaded with food.
++   * Operations subscribes to this and publishes OperationStateUpdated.
++   */
++  public async publishRobotLoaded(payload: Exchanges.PayloadOf<Exchanges.Names.Deliveries.RobotLoaded>): Promise<void> {
++    this.logger.log({ message: 'publishRobotLoaded called', payload });
++
++    const proto = new RobotLoadedEvent();
++    proto.setDeviceId(payload.deviceId);
++
++    await this.amqp.publish(
++      Exchanges.prefixWithEnv(Exchanges.Names.Deliveries.RobotLoaded),
++      '',
++      Buffer.from(proto.serializeBinary()),
++    );
++    this.logger.log({ message: 'publishRobotLoaded published', payload });
++  }
++
++  /**
++   * Publishes a RobotUnloaded event when a robot is unloaded (e.g., rescue fails).
++   * Operations subscribes to this and publishes OperationStateUpdated.
++   */
++  public async publishRobotUnloaded(
++    payload: Exchanges.PayloadOf<Exchanges.Names.Deliveries.RobotUnloaded>,
++  ): Promise<void> {
++    this.logger.log({ message: 'publishRobotUnloaded called', payload });
++
++    const proto = new RobotUnloadedEvent();
++    proto.setDeviceId(payload.deviceId);
++
++    await this.amqp.publish(
++      Exchanges.prefixWithEnv(Exchanges.Names.Deliveries.RobotUnloaded),
++      '',
++      Buffer.from(proto.serializeBinary()),
++    );
++    this.logger.log({ message: 'publishRobotUnloaded published', payload });
++  }
+ }
+diff --git a/service/dispatch-engine/src/modules/demand/service/operations.service.ts b/service/dispatch-engine/src/modules/demand/service/operations.service.ts
+index b2aec2c960..fa420dea21 100644
+--- a/service/dispatch-engine/src/modules/demand/service/operations.service.ts
++++ b/service/dispatch-engine/src/modules/demand/service/operations.service.ts
+@@ -105,7 +105,6 @@ export class OperationsClientService {
+         id: demand.plan.routeId,
+       },
+       expectedStartTime: demand.plan.estimatedStart ?? demand.start,
+-      latestStart: demand.latestStart,
+       reason: reason ?? null,
+     };
+ 
+diff --git a/service/operations/prisma/migrations/20260128000004_add_task_latest_start/migration.sql b/service/operations/prisma/migrations/20260128000004_add_task_latest_start/migration.sql
+deleted file mode 100644
+index 929ac71ffa..0000000000
+--- a/service/operations/prisma/migrations/20260128000004_add_task_latest_start/migration.sql
++++ /dev/null
+@@ -1,2 +0,0 @@
+--- AlterTable
+-ALTER TABLE "Task" ADD COLUMN     "latest_start" TIMESTAMP(3);
+diff --git a/service/operations/prisma/schema.prisma b/service/operations/prisma/schema.prisma
+index ecd1695d70..e7a312ef91 100644
+--- a/service/operations/prisma/schema.prisma
++++ b/service/operations/prisma/schema.prisma
+@@ -31,7 +31,6 @@ model Task {
+   attemptId              String?
+   trip                   Trip?
+   pilotAssignmentHistory PilotAssignmentModel[]
+-  latestStart            DateTime?              @map("latest_start")
+ 
+   createdAt DateTime @default(now())
+   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+diff --git a/service/operations/src/modules/api/pilots/mappers/__tests__/test-data.ts b/service/operations/src/modules/api/pilots/mappers/__tests__/test-data.ts
+index 0a6e291c26..7d7668a014 100644
+--- a/service/operations/src/modules/api/pilots/mappers/__tests__/test-data.ts
++++ b/service/operations/src/modules/api/pilots/mappers/__tests__/test-data.ts
+@@ -119,7 +119,6 @@ export const fullPilot: FullPilotDBView = {
+     task: {
+       id: v4(),
+       scheduledFor: baseTime,
+-      latestStart: baseTime,
+       status: TaskStatus.IN_PROGRESS,
+       type: TaskType.DELIVERY_TRIP,
+       orderId: 'order-1',
+diff --git a/service/operations/src/modules/pilots/pilot-assignments/services/assignment.mapper.ts b/service/operations/src/modules/pilots/pilot-assignments/services/assignment.mapper.ts
+index c95a83a165..44b9403d62 100644
+--- a/service/operations/src/modules/pilots/pilot-assignments/services/assignment.mapper.ts
++++ b/service/operations/src/modules/pilots/pilot-assignments/services/assignment.mapper.ts
+@@ -118,7 +118,7 @@ export class AssignmentMapper {
+       deviceId: rawTrip.robotSerial,
+       earliestStart: this.extractAssignableAt(rawTrip),
+       // TODO - GB This is temporary - 6 hours in the future
+-      latestStart: rawTrip.latestStart ?? rawTrip.scheduledFor ?? new Date(new Date().getTime() + 21600_000),
++      latestStart: rawTrip.scheduledFor ?? new Date(new Date().getTime() + 21600_000),
+       route: this.extractRoute(rawTrip.trip.routes[0]),
+       status: rawTrip.status,
+       assignmentVersion: this.pilotAssignmentHelpers.extractCurrentTripAssignmentVersion(rawTrip),
+diff --git a/service/operations/src/modules/publisher/services/publisher.service.ts b/service/operations/src/modules/publisher/services/publisher.service.ts
+index 4eec05abda..5168dc1335 100644
+--- a/service/operations/src/modules/publisher/services/publisher.service.ts
++++ b/service/operations/src/modules/publisher/services/publisher.service.ts
+@@ -1,7 +1,8 @@
+ import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
+ import { Injectable } from '@nestjs/common';
+ 
+-import { Exchanges, ILogger } from '@coco/common';
++import { Exchanges, ILogger, mapRobotStateEventStateToProtoOperationState } from '@coco/common';
++import { OperationStateUpdatedEvent } from '@coco/coco-cjs-gen/coco/dp/operations/v1alpha/events/operation_state_updated_event_pb';
+ 
+ @Injectable()
+ export class PublisherService {
+@@ -12,11 +13,64 @@ export class PublisherService {
+     this.logger.setContext(PublisherService.name);
+   }
+ 
++  /**
++   * @deprecated This method is temporary and will be removed once all consumers
++   * have migrated to subscribe to Operations.OperationStateUpdated instead of
++   * Robots.StateChange. Replace all references to publishRobotStateUpdated with
++   * publishOperationStateUpdated once migration is complete.
++   */
+   public async publishRobotStateUpdated(
+     payload: Exchanges.PayloadOf<Exchanges.Names.Robots.StateChange>,
+   ): Promise<void> {
+     this.logger.debug({ message: 'publishRobotStateUpdated called, publishing payload', payload });
++
++    // TODO(DP-3027): Remove this once all consumers have migrated to Operations.OperationStateUpdated
++    // Dual publish temporarily to support migration.
+     await this.amqp.publish(Exchanges.prefixWithEnv(Exchanges.Names.Robots.StateChange), '', payload);
++    await this.publishOperationStateUpdated({
++      deviceId: payload.serial,
++      operationState: payload.operationState
++        ? mapRobotStateEventStateToProtoOperationState(payload.operationState)
++        : undefined,
++      needsMaintenance: payload.needsMaintenance,
++      undergoingMaintenance: payload.undergoingMaintenance,
++      hasFood: payload.hasFood,
++    });
++
+     this.logger.debug({ message: 'publishRobotStateUpdated called, payload published', payload });
+   }
++
++  /**
++   * Publishes the consolidated OperationStateUpdated event.
++   * This event consolidates multiple legacy events (Robots.StateChange, IoT.Heartbeat, Robots.State)
++   * into a single source of truth for robot operational state.
++   */
++  public async publishOperationStateUpdated(
++    payload: Exchanges.PayloadOf<Exchanges.Names.Operations.OperationStateUpdated>,
++  ): Promise<void> {
++    this.logger.debug({ message: 'publishOperationStateUpdated called', payload });
++
++    const proto = new OperationStateUpdatedEvent();
++    proto.setDeviceId(payload.deviceId);
++
++    if (payload.operationState !== undefined) {
++      proto.setOperationState(payload.operationState);
++    }
++    if (payload.needsMaintenance !== undefined) {
++      proto.setNeedsMaintenance(payload.needsMaintenance);
++    }
++    if (payload.undergoingMaintenance !== undefined) {
++      proto.setUndergoingMaintenance(payload.undergoingMaintenance);
++    }
++    if (payload.hasFood !== undefined) {
++      proto.setHasFood(payload.hasFood);
++    }
++
++    await this.amqp.publish(
++      Exchanges.prefixWithEnv(Exchanges.Names.Operations.OperationStateUpdated),
++      '',
++      Buffer.from(proto.serializeBinary()),
++    );
++    this.logger.debug({ message: 'publishOperationStateUpdated published', payload });
++  }
+ }
+diff --git a/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts b/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts
+index 90176e1454..44a637ff70 100644
+--- a/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts
++++ b/service/operations/src/modules/robots/handlers/robot-state-change-handler.ts
+@@ -1,7 +1,15 @@
+ import { Injectable } from '@nestjs/common';
+ 
+-import { Exchanges, ILogger, RabbitSubscribeWithDlqAndRetry, RobotConnectivity } from '@coco/common';
++import {
++  Exchanges,
++  ILogger,
++  mapRobotStateToProtoOperationState,
++  RabbitSubscribeWithDlqAndRetry,
++  RobotConnectivity,
++} from '@coco/common';
++import { OperationState } from '@coco/coco-cjs-gen/coco/dp/operations/v1alpha/operation_state_pb';
+ 
++import { PublisherService } from '../../publisher/services/publisher.service';
+ import { RobotEphemeralDataService } from '../services/robot-ephemeral-data.service';
+ import { RobotsService } from '../services/robots.service';
+ 
+@@ -13,6 +21,7 @@ export class RobotStateChangeHandler {
+     protected readonly logger: ILogger,
+     protected readonly robotEphemeralDataService: RobotEphemeralDataService,
+     protected readonly robotService: RobotsService,
++    private readonly publisherService: PublisherService,
+   ) {
+     this.logger.setContext(RobotStateChangeHandler.name);
+   }
+@@ -29,6 +38,11 @@ export class RobotStateChangeHandler {
+       robotState: data.toState,
+       comment: data?.request?.comment ?? '',
+     });
++
++    await this.publisherService.publishOperationStateUpdated({
++      deviceId: data.serial,
++      operationState: mapRobotStateToProtoOperationState(data.toState),
++    });
+   }
+ 
+   @RabbitSubscribeWithDlqAndRetry(
+@@ -66,4 +80,27 @@ export class RobotStateChangeHandler {
+       driveable: payload.driveable,
+     });
+   }
++
++  @RabbitSubscribeWithDlqAndRetry(Exchanges.Names.Deliveries.RobotLoaded, '#', 'operations/robot-loaded')
++  async onRobotLoaded(payload: Exchanges.PayloadOf<Exchanges.Names.Deliveries.RobotLoaded>) {
++    this.logger.debug({ message: 'operations: received robot loaded event', data: payload });
++
++    await this.publisherService.publishOperationStateUpdated({
++      deviceId: payload.deviceId,
++      hasFood: true,
++      // TODO(DP-3027): Check if we actually need to set operationState here, for now we're keeping it to
++      // preserve existing behavior from Robots.StateChange.
++      operationState: OperationState.OPERATION_STATE_ON_TRIP,
++    });
++  }
++
++  @RabbitSubscribeWithDlqAndRetry(Exchanges.Names.Deliveries.RobotUnloaded, '#', 'operations/robot-unloaded')
++  async onRobotUnloaded(payload: Exchanges.PayloadOf<Exchanges.Names.Deliveries.RobotUnloaded>) {
++    this.logger.debug({ message: 'operations: received robot unloaded event', data: payload });
++
++    await this.publisherService.publishOperationStateUpdated({
++      deviceId: payload.deviceId,
++      hasFood: false,
++    });
++  }
+ }
+diff --git a/service/operations/src/modules/trips/__test__/integration/pilot-trips.integration.spec.ts b/service/operations/src/modules/trips/__test__/integration/pilot-trips.integration.spec.ts
+index 090faf7196..a04fa6289c 100644
+--- a/service/operations/src/modules/trips/__test__/integration/pilot-trips.integration.spec.ts
++++ b/service/operations/src/modules/trips/__test__/integration/pilot-trips.integration.spec.ts
+@@ -100,8 +100,7 @@ describe('Pilot Trips', () => {
+         source: RouteSource.Internal,
+         id: null,
+       },
+-      expectedStartTime: new Date(),
+-      latestStart: new Date(),
++      expectedStartTime: new Date('2024-12-20T10:00:00Z'),
+       reason: null,
+     };
+   };
+diff --git a/service/operations/src/modules/trips/__test__/integration/trip-cancelation-handler.integration.spec.ts b/service/operations/src/modules/trips/__test__/integration/trip-cancelation-handler.integration.spec.ts
+index dd1f5e8420..c90ae6004b 100644
+--- a/service/operations/src/modules/trips/__test__/integration/trip-cancelation-handler.integration.spec.ts
++++ b/service/operations/src/modules/trips/__test__/integration/trip-cancelation-handler.integration.spec.ts
+@@ -115,8 +115,6 @@ describe('Pilot Trips', () => {
+       id: null,
+     },
+     expectedStartTime: new Date('2024-12-20T10:00:00Z'),
+-    latestStart: new Date('2024-12-20T10:00:00Z'),
+-    reason: null,
+   };
+ 
+   const getNewTrip = (type = TripType.DELIVERY, attemptId = ''): CreateTripInput => {
+diff --git a/service/operations/src/modules/trips/definitions/dtos/create-trip.dto.ts b/service/operations/src/modules/trips/definitions/dtos/create-trip.dto.ts
+index 9ba3a3ecd0..e62d670112 100644
+--- a/service/operations/src/modules/trips/definitions/dtos/create-trip.dto.ts
++++ b/service/operations/src/modules/trips/definitions/dtos/create-trip.dto.ts
+@@ -12,7 +12,6 @@ import {
+   ValidateIf,
+   ValidateNested,
+ } from 'class-validator';
+-import { parseISO } from 'date-fns';
+ 
+ import { LngLat, RouteSource, RouteWithSource } from '@coco/types/maps';
+ import { CompleteLocation, CreateTripInput } from '@coco/types/operations';
+@@ -189,12 +188,6 @@ export class CreateTripDto implements CreateTripInput {
+   @TransformDate()
+   expectedStartTime!: Date;
+ 
+-  @ApiProperty({ required: false })
+-  @IsOptional()
+-  @IsDate()
+-  @Transform(({ value }: { value: unknown }) => (value != null && typeof value === 'string' ? parseISO(value) : value))
+-  latestStart: Date | null = null;
+-
+   @ApiProperty({ required: false })
+   @IsOptional()
+   @IsString()
+diff --git a/service/operations/src/modules/trips/definitions/index.ts b/service/operations/src/modules/trips/definitions/index.ts
+index 4938ac4109..4482f68507 100644
+--- a/service/operations/src/modules/trips/definitions/index.ts
++++ b/service/operations/src/modules/trips/definitions/index.ts
+@@ -172,7 +172,6 @@ export class TripCreated implements PilotTripsEvent {
+   public readonly destination: TripLocation;
+   public readonly route: RouteWithSource;
+   public readonly expectedStartTime: Date;
+-  public readonly latestStart: Date;
+   public readonly preferredPilotId: null | string;
+   public readonly quoteId: string | null;
+   public readonly reason: string | null;
+@@ -189,7 +188,6 @@ export class TripCreated implements PilotTripsEvent {
+     state,
+     notes,
+     expectedStartTime,
+-    latestStart,
+     preferredPilotId,
+     quoteId,
+     reason,
+@@ -205,7 +203,6 @@ export class TripCreated implements PilotTripsEvent {
+     this.state = state;
+     this.route = route;
+     this.expectedStartTime = expectedStartTime;
+-    this.latestStart = latestStart;
+     this.preferredPilotId = preferredPilotId;
+     this.quoteId = quoteId;
+     this.reason = reason;
+diff --git a/service/operations/src/modules/trips/repositories/pilot-trips.repository.ts b/service/operations/src/modules/trips/repositories/pilot-trips.repository.ts
+index 5042403f02..5377488674 100644
+--- a/service/operations/src/modules/trips/repositories/pilot-trips.repository.ts
++++ b/service/operations/src/modules/trips/repositories/pilot-trips.repository.ts
+@@ -496,7 +496,6 @@ export class PilotTripsRepository {
+         data: metadata,
+         notes: data.notes,
+         scheduledFor: data.expectedStartTime,
+-        latestStart: data.latestStart,
+         robot: data.botSerial
+           ? {
+               connect: {
+diff --git a/service/operations/src/modules/trips/services/pilot-trips.service.ts b/service/operations/src/modules/trips/services/pilot-trips.service.ts
+index e02cef7c33..70e493b09b 100644
+--- a/service/operations/src/modules/trips/services/pilot-trips.service.ts
++++ b/service/operations/src/modules/trips/services/pilot-trips.service.ts
+@@ -520,7 +520,6 @@ export class PilotTripsService {
+       route,
+       notes: input.notes,
+       expectedStartTime: input.expectedStartTime,
+-      latestStart: input.latestStart ?? input.expectedStartTime, // TODO (sarah): remove fallback once latestStart is required
+       preferredPilotId: null,
+       quoteId: input.quoteId,
+       reason: input.reason,
+diff --git a/service/operations/src/test/park-requests/park-requests.integration.spec.ts b/service/operations/src/test/park-requests/park-requests.integration.spec.ts
+index 92c2e223a4..321fba09fa 100644
+--- a/service/operations/src/test/park-requests/park-requests.integration.spec.ts
++++ b/service/operations/src/test/park-requests/park-requests.integration.spec.ts
+@@ -120,7 +120,6 @@ describe('Park Requests', () => {
+         id: null,
+       },
+       expectedStartTime: new Date('2024-12-20T10:00:00Z'),
+-      latestStart: new Date('2024-12-20T10:00:00Z'),
+       reason: '',
+     };
+   };
+diff --git a/service/operations/src/test/trips/report-route-issue.integration.spec.ts b/service/operations/src/test/trips/report-route-issue.integration.spec.ts
+index b41c0643e8..13e275e937 100644
+--- a/service/operations/src/test/trips/report-route-issue.integration.spec.ts
++++ b/service/operations/src/test/trips/report-route-issue.integration.spec.ts
+@@ -124,10 +124,8 @@ describe('Report Route Issue', () => {
+         ],
+       },
+       expectedStartTime: new Date(),
+-      latestStart: new Date(),
+       botSerial: BotSerial,
+       deliveryMetadata: { attemptId: '1', deliveryId: '1', partnerId: 'PARTNER_1' },
+-      reason: '',
+     };
+ 
+     afterEach(async () => {
+@@ -317,10 +315,8 @@ describe('Report Route Issue', () => {
+         ],
+       },
+       expectedStartTime: new Date(),
+-      latestStart: new Date(),
+       botSerial: BotSerial,
+       deliveryMetadata: { attemptId: '1', deliveryId: '1', partnerId: 'PARTNER_1' },
+-      reason: '',
+     };
+ 
+     afterEach(async () => {
+diff --git a/service/operations/src/test/utils/mocks/pilot.builder.ts b/service/operations/src/test/utils/mocks/pilot.builder.ts
+index 0a62024d7a..df9aae6921 100644
+--- a/service/operations/src/test/utils/mocks/pilot.builder.ts
++++ b/service/operations/src/test/utils/mocks/pilot.builder.ts
+@@ -90,7 +90,6 @@ export class PilotBuilder {
+         robotSerial: null,
+         status: TaskStatus.IN_PROGRESS,
+         scheduledFor: new Date(Date.now() + 6 * 60 * 60 * 1000),
+-        latestStart: new Date(Date.now() + 6 * 60 * 60 * 1000),
+         data: null,
+         hubId: 'override-hub-id',
+         createdAt: new Date(),
+@@ -266,7 +265,6 @@ const mapToProjectionAssignments = (assignments: FullAssignment[]): PilotAssignm
+       deliveryId: assignment.task.deliveryId,
+       attemptId: assignment.task.attemptId,
+       scheduledFor: assignment.task.scheduledFor,
+-      latestStart: assignment.task.latestStart,
+       status: assignment.task.status,
+       type: assignment.task.type,
+     },
+diff --git a/service/operations/src/test/utils/mocks/trips.ts b/service/operations/src/test/utils/mocks/trips.ts
+index 23dde769bc..88ae138621 100644
+--- a/service/operations/src/test/utils/mocks/trips.ts
++++ b/service/operations/src/test/utils/mocks/trips.ts
+@@ -75,7 +75,6 @@ export const createTripInputs: CreateTripInput[] = [
+       ],
+     },
+     expectedStartTime: new Date(),
+-    latestStart: new Date(),
+     botSerial: C1TEST1.serial,
+     deliveryMetadata: { attemptId: '1', deliveryId: '1', partnerId: 'PARTNER_1' },
+     reason: null,
