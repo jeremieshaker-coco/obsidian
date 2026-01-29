@@ -224,11 +224,11 @@ flowchart TD
 ### Step-by-Step Breakdown
 
 #### Phase 1: Intake (Events: Webhook received)
-| Step | Event/State Change | Service | Code Reference |
-|------|-------------------|---------|----------------|
-| 1.1 | Partner webhook received | Integrations | [`huuva.service.ts`](service/integrations/src/huuva/huuva.service.ts) |
-| 1.2 | PII stored | Privacy Service | `createPii()` |
-| 1.3 | Quote requested | Deliveries → Dispatch | `getQuote()` |
+| Step | Event/State Change       | Service               | Code Reference                                                        |
+| ---- | ------------------------ | --------------------- | --------------------------------------------------------------------- |
+| 1.1  | Partner webhook received | Integrations          | [`huuva.service.ts`](service/integrations/src/huuva/huuva.service.ts) |
+| 1.2  | PII stored               | Privacy Service       | `createPii()`                                                         |
+| 1.3  | Quote requested          | Deliveries → Dispatch | `getQuote()`                                                          |
 
 #### Phase 2: Quoting (Events: Estimate generated)
 | Step | Event/State Change | Service | Code Reference |

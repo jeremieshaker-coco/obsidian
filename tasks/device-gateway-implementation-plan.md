@@ -19,12 +19,9 @@ This plan covers:
 
 ## Decisions
 
-- **Decision:** Replace `Robots.StateChange` with `Operations.DeviceOperationalStateChanged` (payload only: **fields with active consumers** — `hasFood`, `operationState`, `needsMaintenance`, `undergoingMaintenance`). 
-  **Rationale:** Robots.StateChange houses the `OperationState` enum, which is hard to clean up (see [The tendrils of Operation State](https://www.notion.so/The-tendrils-of-Operation-State-2e886fd0dcab80558a23dcd99de253e6?pvs=21) for reference).
-- **Decision:** Remove Operations’ ephemeral cache in favor of direct Device Service reads for telemetry/health/connectivity. 
-  **Rationale:** Operations' ephemeral robot state is exposed through the HTTP API endpoint, which itself is consumed by Mission Control and MRO, and is used to determine [`robot readiness`](https://github.com/cocorobotics/delivery-platform/blob/ea850fcf2f5087c6f5c4c4dc93db1a05ad172636/service/operations/src/modules/robots/services/robots.service.ts#L700).
-- **Decision:** Publish `Device.StateUpdated` (full device snapshots) instead of Heartbeats.
-  **Rationale:** There are a few parts of the system that need to have an up-to-date snapshot of the device (Fleet, Dispatch), and having different types of events updating (overlapping) parts of the overall device snapshot makes it difficult to ensure that all of the different components are working with the same state. By having the Device Service publish all updates in the same stream, we eliminate the need for adding conflict resolution for every consumer.
+- **Decision:** Replace `Robots.StateChange` with `Operations.DeviceOperationalStateChanged` (payload only: **fields with active consumers** — `hasFood`, `operationState`, `needsMaintenance`, `undergoingMaintenance`). **Rationale:** Robots.StateChange houses the `OperationState` enum, which is hard to clean up (see [The tendrils of Operation State](https://www.notion.so/The-tendrils-of-Operation-State-2e886fd0dcab80558a23dcd99de253e6?pvs=21) for reference).
+- **Decision:** Remove Operations’ ephemeral cache in favor of direct Device Service reads for telemetry/health/connectivity. **Rationale:** Operations' ephemeral robot state is exposed through the HTTP API endpoint, which itself is consumed by Mission Control and MRO, and is used to determine [`robot readiness`](https://github.com/cocorobotics/delivery-platform/blob/ea850fcf2f5087c6f5c4c4dc93db1a05ad172636/service/operations/src/modules/robots/services/robots.service.ts#L700).
+- **Decision:** Publish `Device.StateUpdated` (full device snapshots) instead of Heartbeats. **Rationale:** There are a few parts of the system that need to have an up-to-date snapshot of the device (Fleet, Dispatch), and having different types of events updating (overlapping) parts of the overall device snapshot makes it difficult to ensure that all of the different components are working with the same state. By having the Device Service publish all updates in the same stream, we eliminate the need for adding conflict resolution for every consumer.
 
 ## StateChangeEvent Field Usage
 
@@ -138,7 +135,7 @@ The `data-pipeline` service consumes AMQP exchanges listed in the `EXCHANGES` en
 ### 1.2 Data Layer
 
 - [ ] **M01-03**: Define protobuf schemas for Device.* events
-    - `Device.StateUpdated` (full snapshot; temporary stand-in for gRPC stream)
+    - `Device` / `Device.StateUpdated` (full snapshot; temporary stand-in for gRPC stream)
     - `Device.LidOpened` / `Device.LidClosed` / `Device.LidJammed`
     - `Device.EmergencyStop`
     - `Device.PinEntry`
@@ -417,7 +414,6 @@ The `data-pipeline` service consumes AMQP exchanges listed in the `EXCHANGES` en
     - _Verification:_ Manual validation of location/battery/health/connectivity values in dev/staging
 - [ ] **M09-02**: Remove Operations telemetry cache maintenance
     - Update call sites that currently read `RobotEphemeralDataService` (list, readiness, health, location)
-    - Include `getRobotOperationalReadinessIssue()` and its call sites (loadable robots, deploy gating, open-lid checks), which read connectivity/health/state from the ephemeral cache
     - Remove `IoT.Heartbeat` and `Device.StateUpdated` handlers used solely for cache writes
     - Remove `State.ConnectivityOverallChanged` subscription in Operations
     - Remove `hydrateConnectivity()` cache priming
@@ -992,7 +988,7 @@ graph TD
     M12.2 --> M12
 
     %% Deliveries Service - depends on M3 for Device.Lid* and Device.PinEntry
-    M3 --> M10[10 Deliveries Service]
+    M3 --> M10[M10 Deliveries Service]
 
     %% Publisher cleanup flow
     M11 --> M13[M13 Remove Robots.StateChange Publishers]
